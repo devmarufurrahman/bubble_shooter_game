@@ -62,15 +62,20 @@ class BulletBubble extends PositionComponent with CollisionCallbacks {
   bool get isMoving => _isMoving;
   bool get hasStopped => _hasStopped;
 
+  /// Cached reference to the collision hitbox.
+  CircleHitbox? _hitbox;
+  CircleHitbox? get hitbox => _hitbox;
+
   @override
   Future<void> onLoad() async {
     await super.onLoad();
     // Add collision boundary centered at Vector2.zero
-    add(CircleHitbox(
+    _hitbox = CircleHitbox(
       radius: radius,
       anchor: Anchor.center,
       position: Vector2.zero(),
-    ));
+    );
+    add(_hitbox!);
   }
 
   /// Halts the projectile physics and locks its current position.
@@ -79,7 +84,18 @@ class BulletBubble extends PositionComponent with CollisionCallbacks {
     _isMoving = false;
     _hasStopped = true;
     velocity = Vector2.zero();
+    _hitbox?.collisionType = CollisionType.inactive;
     onStopped?.call();
+  }
+
+  @override
+  void onRemove() {
+    stopMovement();
+    if (_hitbox != null) {
+      _hitbox!.collisionType = CollisionType.inactive;
+      _hitbox = null;
+    }
+    super.onRemove();
   }
 
   @override

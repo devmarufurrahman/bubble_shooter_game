@@ -2,10 +2,11 @@ import 'package:firebase_auth/firebase_auth.dart';
 import 'package:firebase_core/firebase_core.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
-import 'auth/auth_service.dart';
+
+import 'data/repositories/repositories.dart';
 import 'firebase_options.dart';
-import 'ui/level_select_screen.dart';
-import 'ui/login_screen.dart';
+import 'presentation/auth/login_screen.dart';
+import 'presentation/stage_select/stage_select_screen.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -61,7 +62,7 @@ class AuthWrapper extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return StreamBuilder<User?>(
-      stream: AuthService.instance.authStateChanges,
+      stream: AuthRepository.authStateStream,
       builder: (context, snapshot) {
         if (snapshot.connectionState == ConnectionState.waiting) {
           return const Scaffold(
@@ -87,7 +88,7 @@ class AuthWrapper extends StatelessWidget {
             );
           },
           child: isAuthenticated
-              ? const LevelSelectScreen(key: ValueKey('LevelSelectScreen'))
+              ? const StageSelectScreen(key: ValueKey('StageSelectScreen'))
               : const LoginScreen(key: ValueKey('LoginScreen')),
         );
       },

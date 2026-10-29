@@ -1,20 +1,18 @@
 import 'dart:math' show Point;
+
 import 'package:flame/components.dart';
 import 'package:flame/events.dart';
 import 'package:flame/game.dart';
-import 'package:flutter/material.dart';
-import 'package:flutter/services.dart';
-import '../levels/level_data.dart';
-import '../levels/level_manager.dart';
-import 'audio/sound_manager.dart';
-import 'components/arcade_game_backdrop.dart';
-import 'components/bubble_component.dart';
-import 'components/bubble_pop_particle.dart';
-import 'components/bullet_bubble.dart';
-import 'components/cannon_component.dart';
-import 'components/falling_bubble_component.dart';
-import 'components/grid_manager.dart';
-import 'logic/match_checker.dart';
+import 'package:flutter/foundation.dart';
+import 'package:flutter/material.dart' show Color;
+
+import '../core/audio/audio.dart';
+import '../core/constants/constants.dart';
+import '../core/utils/utils.dart';
+import '../data/models/models.dart';
+import '../data/repositories/repositories.dart';
+import 'components/components.dart';
+import 'logic/logic.dart';
 
 /// The core Flame engine game host for the Bubble Shooter game.
 /// Coordinates the Odd-r hex board, interactive cannon, projectile physics,
@@ -22,18 +20,18 @@ import 'logic/match_checker.dart';
 class BubbleShooterGame extends FlameGame
     with HasCollisionDetection, PanDetector {
   BubbleShooterGame({this.levelNumber = 1})
-      : super(
-          camera: CameraComponent.withFixedResolution(
-            width: virtualWidth,
-            height: virtualHeight,
-          ),
-        );
+    : super(
+        camera: CameraComponent.withFixedResolution(
+          width: virtualWidth,
+          height: virtualHeight,
+        ),
+      );
 
   /// Target virtual resolution width.
-  static const double virtualWidth = 400.0;
+  static const double virtualWidth = GameConstants.virtualWidth;
 
   /// Target virtual resolution height.
-  static const double virtualHeight = 700.0;
+  static const double virtualHeight = GameConstants.virtualHeight;
 
   /// Active campaign level number.
   final int levelNumber;
@@ -46,6 +44,9 @@ class BubbleShooterGame extends FlameGame
 
   /// Aiming cannon and bubble queue component.
   late final CannonComponent cannon;
+
+  /// Dynamic pulsating neon danger threshold boundary line.
+  late final DangerLineComponent dangerLine;
 
   /// Active projectile in flight, or null if ready to shoot.
   BulletBubble? activeBullet;
@@ -60,7 +61,7 @@ class BubbleShooterGame extends FlameGame
   final ValueNotifier<int> shotsNotifier = ValueNotifier<int>(0);
 
   /// Floor line threshold Y coordinate (100px above cannon pivot).
-  static const double dangerThresholdY = 552.0;
+  static const double dangerThresholdY = GameConstants.dangerThresholdY;
 
   /// Reason description if game ended in defeat.
   String? gameOverReason;
@@ -82,7 +83,7 @@ class BubbleShooterGame extends FlameGame
   final ValueNotifier<int> scoreNotifier = ValueNotifier<int>(0);
 
   @override
-  Color backgroundColor() => const Color(0xFF060913);
+  Color backgroundColor() => GameConstants.backgroundDark;
 
   @override
   Future<void> onLoad() async {
@@ -113,13 +114,21 @@ class BubbleShooterGame extends FlameGame
       oddColumns: 7,
     );
 
-    // Procedural Arcade Backdrop with ceiling line and danger floor line
+    // Procedural Arcade Backdrop with ceiling line
     final backdrop = ArcadeGameBackdrop(
       ceilingY: gridManager.ceilingY,
-      dangerLineY: dangerThresholdY,
       size: Vector2(virtualWidth, virtualHeight),
     );
     await world.add(backdrop);
+
+    // Dynamic Pulsating Danger Zone Warning Line
+    dangerLine = DangerLineComponent(
+      dangerThresholdY: dangerThresholdY,
+      gameWidth: virtualWidth,
+      gameHeight: virtualHeight,
+      gridManager: gridManager,
+    );
+    await world.add(dangerLine);
 
     // Add GridManager to the world
     await world.add(gridManager);
@@ -130,6 +139,8 @@ class BubbleShooterGame extends FlameGame
       gameHeight: virtualHeight,
       ceilingY: gridManager.ceilingY,
       bubbleRadius: gridManager.radius,
+      shotsNotifier: shotsNotifier,
+      isBulletFlyingProvider: () => isBulletFlying,
     );
     cannon.availableColors = levelConfig.availableColors;
     await world.add(cannon);
@@ -153,14 +164,30 @@ class BubbleShooterGame extends FlameGame
     scoreNotifier.value = 0;
     shotsRemaining = levelConfig.maxShots;
     shotsNotifier.value = shotsRemaining;
+    cannon.setShotsRemaining(shotsRemaining);
     gameOverReason = null;
     isProcessingMatch = false;
 
     activeBullet?.removeFromParent();
     activeBullet = null;
 
-    // Remove any remaining falling bubbles
-    world.children.whereType<FallingBubbleComponent>().forEach((b) => b.removeFromParent());
+    // Remove any remaining falling bubbles or floating texts
+    gridManager.children
+        .whereType<BubbleComponent>()
+        .where((b) => b.isDropping)
+        .toList()
+        .forEach((b) => b.removeFromParent());
+    world.children
+        .whereType<BubbleComponent>()
+        .where((b) => b.isDropping)
+        .toList()
+        .forEach((b) => b.removeFromParent());
+    world.children.whereType<FallingBubbleComponent>().toList().forEach(
+      (b) => b.removeFromParent(),
+    );
+    world.children.whereType<FloatingTextComponent>().toList().forEach(
+      (t) => t.removeFromParent(),
+    );
 
     gridManager.clear();
     gridManager.populateInitialGrid(levelConfig.initialGrid, oneBased: true);
@@ -178,6 +205,13 @@ class BubbleShooterGame extends FlameGame
   void onPanStart(DragStartInfo info) {
     if (!canAimAndShoot) return;
     final Vector2 worldPoint = camera.globalToLocal(info.eventPosition.widget);
+
+    // Tactical Bubble Swap: if player taps the swap button or NEXT pod, swap bubbles
+    if (cannon.checkSwapHit(worldPoint)) {
+      cannon.swapBubbles(isBulletFlying: isBulletFlying);
+      return;
+    }
+
     cannon.isAiming = true;
     cannon.aimAt(worldPoint);
   }
@@ -205,12 +239,14 @@ class BubbleShooterGame extends FlameGame
   void _fireBullet() {
     if (!canAimAndShoot) return;
 
-    // Consume one shot
+    // Consume one shot and animate ammo stack pop
     shotsRemaining--;
     shotsNotifier.value = shotsRemaining;
+    cannon.onShotFired(cannon.currentBubbleType);
 
-    // Trigger firing audio effect
+    // Trigger firing audio effect and tactile feedback
     SoundManager.instance.playShoot();
+    HapticsHelper.selectionClick();
 
     final Vector2 spawnPos = cannon.nozzleTipPosition.clone();
 
@@ -254,44 +290,71 @@ class BubbleShooterGame extends FlameGame
     );
 
     if (matches.length >= 3) {
-      // Trigger pop audio and subtle device haptic feedback
-      SoundManager.instance.playPop();
-      HapticFeedback.lightImpact();
+      // Dispatches batch pop: exactly ONE audio and ONE haptic impulse for the entire cluster
+      final List<BubbleComponent> popped = gridManager.batchPopMatches(matches);
 
-      // Pop all contiguous matching bubbles & spawn sparkling particle explosion
-      for (final Point<int> pt in matches) {
-        final BubbleComponent? bubble = gridManager.detachBubbleAt(pt.x, pt.y);
-        if (bubble != null) {
-          world.add(
-            BubblePopParticle(
-              position: bubble.position.clone(),
-              bubbleType: bubble.bubbleType,
-            ),
-          );
-          bubble.pop();
-        }
+      // Spawn sparkling particle explosion & calculate cluster centroid
+      double sumX = 0;
+      double sumY = 0;
+      for (final BubbleComponent bubble in popped) {
+        sumX += bubble.position.x;
+        sumY += bubble.position.y;
+        world.add(
+          BubblePopParticle(
+            position: bubble.position.clone(),
+            bubbleType: bubble.bubbleType,
+          ),
+        );
       }
 
       // Award +100 points per popped bubble
-      _addScore(matches.length * 100);
+      final int points = popped.length * 100;
+      _addScore(points);
+
+      // Spawn floating score popup at centroid (+100, +400 COMBO x2!, etc.)
+      if (popped.isNotEmpty) {
+        final Vector2 centroid = Vector2(
+          sumX / popped.length,
+          sumY / popped.length,
+        );
+        final String scoreLabel = popped.length > 3
+            ? '+$points COMBO x${popped.length - 2}!'
+            : '+$points';
+        world.add(
+          FloatingTextComponent(
+            text: scoreLabel,
+            position: centroid,
+            textColor: popped.length > 3
+                ? const Color(0xFFFF007F)
+                : const Color(0xFFFFD600),
+            fontSize: popped.length > 3 ? 19.0 : 16.0,
+          ),
+        );
+      }
 
       // Brief aesthetic pause for pop burst animation
       await Future.delayed(const Duration(milliseconds: 140));
 
       // 3. Floating / Disconnected bubble drop cascade
-      final List<FallingBubbleComponent> dropped = MatchChecker.dropFloatingBubbles(
-        gridManager,
-        world,
-      );
+      final List<BubbleComponent> dropped =
+          MatchChecker.dropFloatingBubbles(gridManager);
 
       if (dropped.isNotEmpty) {
-        // Also spawn particles at detachment point for dropped bubbles
-        for (final FallingBubbleComponent falling in dropped) {
+        // Also spawn particles and floating "+200 DROP!" popups at detachment points
+        for (final BubbleComponent falling in dropped) {
           world.add(
             BubblePopParticle(
               position: falling.position.clone(),
               bubbleType: falling.bubbleType,
               particleCount: 8,
+            ),
+          );
+          world.add(
+            FloatingTextComponent(
+              text: '+200 DROP!',
+              position: falling.position.clone(),
+              textColor: const Color(0xFF00E5FF),
+              fontSize: 13.0,
             ),
           );
         }
@@ -300,14 +363,20 @@ class BubbleShooterGame extends FlameGame
       }
     }
 
+    // Wait for all falling / dropping animations to complete before evaluating win condition
+    if (gridManager.hasFallingBubbles) {
+      await waitForFallingBubbles();
+    }
+
     // 4. Win / Defeat condition evaluations
-    if (gridManager.allBubblesCleared) {
+    if (!gridManager.hasAnyBubblesOnGrid && !gridManager.hasFallingBubbles) {
       await handleLevelVictory();
       isProcessingMatch = false;
       return;
     }
 
-    final bool reachedDangerLine = snappedBubble.position.y >= dangerThresholdY ||
+    final bool reachedDangerLine =
+        snappedBubble.position.y >= dangerThresholdY ||
         gridManager.activeBubbles.any((b) => b.position.y >= dangerThresholdY);
 
     if (reachedDangerLine) {
@@ -325,6 +394,18 @@ class BubbleShooterGame extends FlameGame
     // 5. Advance cannon queue and re-enable input
     cannon.cycleNextBubble(gridManager);
     isProcessingMatch = false;
+  }
+
+  /// Waits until all falling orphan bubbles have completely exited the screen
+  /// and detached from the component tree, or until [timeout] is reached.
+  Future<void> waitForFallingBubbles({
+    Duration timeout = const Duration(milliseconds: 1500),
+  }) async {
+    final DateTime start = DateTime.now();
+    while (gridManager.hasFallingBubbles &&
+        DateTime.now().difference(start) < timeout) {
+      await Future<void>.delayed(const Duration(milliseconds: 30));
+    }
   }
 
   /// Calculates earned stars (1 to 3) based on shots remaining for this level.
@@ -350,6 +431,66 @@ class BubbleShooterGame extends FlameGame
     await LevelManager.saveLevelProgress(levelNumber, currentScore, stars);
     pauseEngine();
     overlays.add('WinOverlay');
+  }
+
+  @override
+  void update(double dt) {
+    super.update(dt);
+
+    // Lifecycle memory leak audit: ensure active component tree remains bounded
+    assert(() {
+      final int totalComponents =
+          world.children.length + gridManager.children.length + children.length;
+      if (totalComponents > 250) {
+        debugPrint(
+          'WARNING [BubbleShooterGame]: High component count ($totalComponents) detected. '
+          'World: ${world.children.length}, Grid: ${gridManager.children.length}, Game: ${children.length}',
+        );
+      }
+      return true;
+    }());
+  }
+
+  bool _isDisposed = false;
+
+  /// Whether the game and its resources have been torn down.
+  bool get isDisposed => _isDisposed;
+
+  /// Explicitly tears down game resources, components, grid references,
+  /// and reactive controllers to guarantee leak-free disposal.
+  void onDisposeGame() {
+    if (_isDisposed) return;
+    _isDisposed = true;
+
+    pauseEngine();
+    overlays.clear();
+
+    // 1. Detach and nullify active projectile in flight
+    activeBullet?.removeFromParent();
+    activeBullet = null;
+
+    // 2. Clear cannon and grid components
+    try {
+      cannon.isAiming = false;
+    } catch (_) {}
+
+    try {
+      gridManager.clear();
+    } catch (_) {}
+
+    // 3. Remove all remaining children from world and game tree
+    try {
+      world.removeAll(world.children);
+    } catch (_) {}
+    try {
+      removeAll(children);
+    } catch (_) {}
+
+    // 4. Dispose UI ValueNotifier instances
+    try {
+      scoreNotifier.dispose();
+      shotsNotifier.dispose();
+    } catch (_) {}
   }
 
   void handleGameOver(String reason) {

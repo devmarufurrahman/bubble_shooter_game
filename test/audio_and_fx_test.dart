@@ -1,7 +1,8 @@
 import 'package:flame/components.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
-import 'package:bubble_shooter_game/game/audio/sound_manager.dart';
+import 'package:bubble_shooter_game/core/audio/audio.dart';
+import 'package:bubble_shooter_game/core/utils/utils.dart';
 import 'package:bubble_shooter_game/game/components/bubble_color.dart';
 import 'package:bubble_shooter_game/game/components/bubble_pop_particle.dart';
 import 'package:bubble_shooter_game/game/components/bullet_bubble.dart';
@@ -61,7 +62,55 @@ void main() {
       expect(() => sound.playBounce(), returnsNormally);
       expect(() => sound.playPop(), returnsNormally);
       expect(() => sound.playWin(), returnsNormally);
+      expect(() => sound.playChime(), returnsNormally);
       expect(() => sound.playGameOver(), returnsNormally);
+      expect(() => sound.stopBgm(), returnsNormally);
+    });
+
+    test('BGM toggle and persistence in SoundManager', () async {
+      final sound = SoundManager.instance;
+      await sound.initialize();
+
+      expect(sound.isBgmEnabled, isTrue);
+
+      await sound.toggleBgm();
+      expect(sound.isBgmEnabled, isFalse);
+
+      final prefs = await SharedPreferences.getInstance();
+      expect(prefs.getBool(SoundManager.prefKeyBgm), isFalse);
+
+      await sound.setBgmEnabled(true);
+      expect(sound.isBgmEnabled, isTrue);
+      expect(prefs.getBool(SoundManager.prefKeyBgm), isTrue);
+    });
+  });
+
+  group('HapticsHelper Toggle & Persistence Tests', () {
+    test('Haptics enabled toggle and preferences persistence', () async {
+      await HapticsHelper.initialize();
+      expect(HapticsHelper.isHapticsEnabled, isTrue);
+
+      await HapticsHelper.toggleHaptics();
+      expect(HapticsHelper.isHapticsEnabled, isFalse);
+
+      final prefs = await SharedPreferences.getInstance();
+      expect(prefs.getBool(HapticsHelper.prefKeyHaptics), isFalse);
+
+      await HapticsHelper.setHapticsEnabled(true);
+      expect(HapticsHelper.isHapticsEnabled, isTrue);
+      expect(prefs.getBool(HapticsHelper.prefKeyHaptics), isTrue);
+    });
+
+    test('Haptics methods execute safely when enabled or disabled', () async {
+      await HapticsHelper.setHapticsEnabled(true);
+      expect(() => HapticsHelper.lightImpact(), returnsNormally);
+      expect(() => HapticsHelper.mediumImpact(), returnsNormally);
+      expect(() => HapticsHelper.heavyImpact(), returnsNormally);
+      expect(() => HapticsHelper.selectionClick(), returnsNormally);
+
+      await HapticsHelper.setHapticsEnabled(false);
+      expect(() => HapticsHelper.lightImpact(), returnsNormally);
+      expect(() => HapticsHelper.selectionClick(), returnsNormally);
     });
   });
 

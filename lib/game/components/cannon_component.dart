@@ -1,13 +1,20 @@
 import 'dart:math' as math;
 import 'package:flame/components.dart';
 import 'package:flutter/material.dart';
-import 'bubble_color.dart';
+
+import '../../core/audio/audio.dart';
+import '../../core/utils/utils.dart';
+import '../../data/models/models.dart';
+import 'ammo_inventory_component.dart';
 import 'grid_manager.dart';
 import 'procedural_bubble_renderer.dart';
+import 'trajectory_line.dart';
 
 /// Arcade metallic cannon anchored at bottom-center of the screen.
 /// Handles touch aim calculations, 70-degree rotation clamping,
-/// raycast reflective dotted trajectory lines, and bubble queue previews.
+/// raycast reflective dotted trajectory lines, bubble queue previews,
+/// interactive bubble swapping with 180-degree scale-bounce animation,
+/// and dynamic visual ammo inventory rendering.
 class CannonComponent extends PositionComponent {
   /// Default distance from the bottom of the virtual screen.
   static const double defaultBottomOffset = 48.0;
@@ -18,12 +25,20 @@ class CannonComponent extends PositionComponent {
     required this.ceilingY,
     required this.bubbleRadius,
     this.bottomOffset = defaultBottomOffset,
+    this.shotsNotifier,
+    this.isBulletFlyingProvider,
     Vector2? position,
   }) : super(
           position: position ?? Vector2(gameWidth / 2, gameHeight - bottomOffset),
           size: Vector2.zero(),
           anchor: Anchor.center,
-        );
+        ) {
+    ammoInventory = AmmoInventoryComponent(
+      shotsNotifier: shotsNotifier ?? ValueNotifier<int>(0),
+      position: Vector2(104, 6),
+      bubbleRadius: 8.5,
+    );
+  }
 
   /// Game canvas dimensions.
   final double gameWidth;
@@ -37,6 +52,12 @@ class CannonComponent extends PositionComponent {
 
   /// Physical bubble radius.
   final double bubbleRadius;
+
+  /// Reactive notifier tracking remaining shots.
+  final ValueNotifier<int>? shotsNotifier;
+
+  /// Provider callback checking if a bullet projectile is currently in flight.
+  final bool Function()? isBulletFlyingProvider;
 
   /// Length of the rotating barrel cylinder in logical pixels.
   static const double barrelLength = 46.0;
@@ -65,14 +86,38 @@ class CannonComponent extends PositionComponent {
   /// Upcoming bubble queued next.
   late BubbleType nextBubbleType;
 
+  /// Visual ammo stack component beside the cannon pedestal.
+  late final AmmoInventoryComponent ammoInventory;
+
+  // ── Bubble Swap Animation State ──
+  bool _isSwapping = false;
+  bool get isSwapping => _isSwapping;
+
+  double _swapElapsed = 0.0;
+  static const double _swapDuration = 0.15; // 150 milliseconds
+  BubbleType? _animFromCurrent;
+  BubbleType? _animFromNext;
+
+  // Key local offsets (Centered cannon with furnished, spacious flanking controls)
+  static const Offset _podCenter = Offset(-118, 6);
+  static const Offset _swapBtnCenter = Offset(-64, 6);
+  static const Offset _turretCenter = Offset(0, -6);
+
   @override
   Future<void> onLoad() async {
     await super.onLoad();
+
     // Anchor at exact horizontal center and bottomOffset above bottom
     if (position == Vector2.zero()) {
       position = Vector2(gameWidth / 2, gameHeight - bottomOffset);
     }
+
     initializeQueue();
+
+    // Mount Visual Ammo Inventory beside cannon
+    if (ammoInventory.parent == null) {
+      add(ammoInventory);
+    }
   }
 
   /// Picks a random color from the level's available colors.
@@ -93,6 +138,8 @@ class CannonComponent extends PositionComponent {
       currentBubbleType = _pickAvailableColor();
       nextBubbleType = _pickAvailableColor();
     }
+    _isSwapping = false;
+    _swapElapsed = 0.0;
   }
 
   /// Calculates the exact world position of the cannon nozzle tip.
@@ -125,6 +172,7 @@ class CannonComponent extends PositionComponent {
   void cycleNextBubble(GridManager gridManager) {
     currentBubbleType = nextBubbleType;
     nextBubbleType = pickRandomGridColor(gridManager);
+    _isSwapping = false;
   }
 
   /// Selects a random [BubbleType] currently existing on the active grid.
@@ -141,107 +189,179 @@ class CannonComponent extends PositionComponent {
     return typeList[rng.nextInt(typeList.length)];
   }
 
+  // ── Tactical Bubble Swap ──
+
+  /// Checks whether a touch/click in world coordinates lands on the interactive
+  /// swap button, NEXT bubble pod, or swap hit region.
+  bool checkSwapHit(Vector2 worldPoint) {
+    final Vector2 localPoint = worldPoint - position;
+    final Offset local = Offset(localPoint.x, localPoint.y);
+
+    // Hit test 1: NEXT preview pod (radius ~ 32px)
+    if ((local - _podCenter).distance <= 32.0) return true;
+
+    // Hit test 2: Dedicated circular SWAP button (radius ~ 26px)
+    if ((local - _swapBtnCenter).distance <= 26.0) return true;
+
+    // Hit test 3: Bounding box covering entire left swap cluster
+    const Rect swapHitBox = Rect.fromLTRB(-150, -30, -40, 46);
+    return swapHitBox.contains(local);
+  }
+
+  /// Tactically swaps [currentBubbleType] with [nextBubbleType].
+  /// Guard condition: Disallows swapping while a bullet is actively in flight or already swapping.
+  /// Triggers subtle swoosh sound and haptic selection click.
+  bool swapBubbles({bool? isBulletFlying}) {
+    final bool flying = isBulletFlying ?? (isBulletFlyingProvider?.call() ?? false);
+    if (flying || _isSwapping) return false;
+
+    // Start 150ms 180-degree scale-bounce swap animation
+    _isSwapping = true;
+    _swapElapsed = 0.0;
+    _animFromCurrent = currentBubbleType;
+    _animFromNext = nextBubbleType;
+
+    // Swap logical values
+    final BubbleType temp = currentBubbleType;
+    currentBubbleType = nextBubbleType;
+    nextBubbleType = temp;
+
+    // Play subtle audio swoosh and haptic click
+    SoundManager.instance.playSwap();
+    HapticsHelper.selectionClick();
+
+    return true;
+  }
+
+  /// Notifies the cannon and visual ammo stack that a bullet was launched.
+  void onShotFired([BubbleType? firedType]) {
+    ammoInventory.triggerPopAnimation(firedType ?? currentBubbleType);
+  }
+
+  /// Synchronizes or resets the visual ammo count.
+  void setShotsRemaining(int count) {
+    ammoInventory.setShotsRemaining(count);
+  }
+
+  @override
+  void update(double dt) {
+    super.update(dt);
+
+    if (_isSwapping) {
+      _swapElapsed += dt;
+      if (_swapElapsed >= _swapDuration) {
+        _isSwapping = false;
+        _swapElapsed = _swapDuration;
+      }
+    }
+  }
+
   @override
   void render(Canvas canvas) {
     super.render(canvas);
 
-    // 1. Draw dynamic reflective trajectory guide if player is aiming
-    if (isAiming) {
-      _renderTrajectoryGuide(canvas);
-    }
+    // 1. Sleek Cyber Console Chassis / Rail connecting the lower HUD controls
+    _renderConsoleChassis(canvas);
 
     // 2. Next bubble preview queue (drawn to the left of the cannon)
     _renderNextPreviewPod(canvas);
 
-    // 3. Metallic base pedestal centered at Offset.zero
+    // 3. Interactive SWAP Button situated comfortably between NEXT pod and cannon
+    _renderSwapButton(canvas);
+
+    // 4. Metallic base pedestal centered at Offset.zero
     _renderBasePedestal(canvas);
 
-    // 4. Rotating barrel turret & loaded bubble centered at Offset.zero
+    // 5. Rotating barrel turret & loaded bubble centered at Offset.zero
     _renderRotatingTurret(canvas);
+
+    // 6. Draw dynamic reflective trajectory guide if player is aiming
+    if (isAiming) {
+      _renderTrajectoryGuide(canvas);
+    }
+
+    // 7. If currently swapping, render 180-degree arc orbit animation on top
+    if (_isSwapping) {
+      _renderSwapAnimation(canvas);
+    }
+  }
+
+  /// Renders a futuristic cyberpunk arcade console bracket uniting the lower HUD controls.
+  void _renderConsoleChassis(Canvas canvas) {
+    // 1. Cyber connector rail plate between NEXT pod and Cannon Pedestal
+    final Rect railRect = Rect.fromLTRB(_podCenter.dx - 10, -4, 0, 18);
+    final RRect railRRect =
+        RRect.fromRectAndRadius(railRect, const Radius.circular(8.0));
+
+    final Paint railBg = Paint()
+      ..shader = const LinearGradient(
+        begin: Alignment.topCenter,
+        end: Alignment.bottomCenter,
+        colors: [
+          Color(0xFF1B2544),
+          Color(0xFF0F1528),
+          Color(0xFF070B16),
+        ],
+      ).createShader(railRect);
+    canvas.drawRRect(railRRect, railBg);
+
+    // Glowing cyan cyber trace lines along the rail
+    final Paint tracePaint = Paint()
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = 1.4
+      ..color = const Color(0xFF00E5FF).withValues(alpha: 0.35);
+
+    canvas.drawLine(
+      Offset(_podCenter.dx + 26, 6),
+      const Offset(-38, 6),
+      tracePaint,
+    );
+
+    // Subtle connector rail to the Ammo Magazine on the right
+    final Rect rightRailRect = Rect.fromLTRB(0, -2, 104, 16);
+    final RRect rightRailRRect =
+        RRect.fromRectAndRadius(rightRailRect, const Radius.circular(6.0));
+    final Paint rightRailBg = Paint()
+      ..shader = const LinearGradient(
+        begin: Alignment.topCenter,
+        end: Alignment.bottomCenter,
+        colors: [
+          Color(0xFF161E38),
+          Color(0xFF0A0E1C),
+        ],
+      ).createShader(rightRailRect);
+    canvas.drawRRect(rightRailRRect, rightRailBg);
+
+    final Paint rightTracePaint = Paint()
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = 1.0
+      ..color = const Color(0xFF00E5FF).withValues(alpha: 0.25);
+    canvas.drawLine(
+      const Offset(38, 6),
+      const Offset(88, 6),
+      rightTracePaint,
+    );
   }
 
   /// Renders raycast wall-reflected dotted trajectory guideline starting precisely at the nozzle tip.
   void _renderTrajectoryGuide(Canvas canvas) {
-    // Nozzle tip in local canvas coordinates (Offset.zero is the cannon center)
-    Offset current = Offset(
-      math.sin(aimAngle) * barrelLength,
-      -math.cos(aimAngle) * barrelLength,
+    final List<TrajectorySegment> segments = TrajectoryLine.calculateSegments(
+      origin: Offset(
+        math.sin(aimAngle) * barrelLength,
+        -math.cos(aimAngle) * barrelLength,
+      ),
+      angle: aimAngle,
+      minX: bubbleRadius - position.x,
+      maxX: (gameWidth - bubbleRadius) - position.x,
+      ceilingY: ceilingY - position.y,
     );
-
-    Offset dir = Offset(
-      math.sin(aimAngle),
-      -math.cos(aimAngle),
-    );
-
-    // Bounds in local coordinates
-    final double localMinX = bubbleRadius - position.x;
-    final double localMaxX = (gameWidth - bubbleRadius) - position.x;
-    final double localCeilingY = ceilingY - position.y;
-
-    final List<_GuideSegment> segments = [];
-
-    // Max 3 raycast segments (2 wall reflections + ceiling)
-    for (int bounce = 0; bounce < 3; bounce++) {
-      if (dir.dy >= 0) break; // Trajectory must travel upwards
-
-      final double tCeiling = (localCeilingY - current.dy) / dir.dy;
-
-      if (dir.dx < 0) {
-        // Traveling left: test left wall intersection
-        final double tWall = (localMinX - current.dx) / dir.dx;
-        if (tWall < tCeiling) {
-          final Offset hit = Offset(localMinX, current.dy + dir.dy * tWall);
-          segments.add(_GuideSegment(current, hit));
-          current = hit;
-          dir = Offset(-dir.dx, dir.dy); // Bounce right
-        } else {
-          final Offset hit = Offset(current.dx + dir.dx * tCeiling, localCeilingY);
-          segments.add(_GuideSegment(current, hit));
-          break;
-        }
-      } else if (dir.dx > 0) {
-        // Traveling right: test right wall intersection
-        final double tWall = (localMaxX - current.dx) / dir.dx;
-        if (tWall < tCeiling) {
-          final Offset hit = Offset(localMaxX, current.dy + dir.dy * tWall);
-          segments.add(_GuideSegment(current, hit));
-          current = hit;
-          dir = Offset(-dir.dx, dir.dy); // Bounce left
-        } else {
-          final Offset hit = Offset(current.dx + dir.dx * tCeiling, localCeilingY);
-          segments.add(_GuideSegment(current, hit));
-          break;
-        }
-      } else {
-        // Straight up
-        final Offset hit = Offset(current.dx, localCeilingY);
-        segments.add(_GuideSegment(current, hit));
-        break;
-      }
-    }
 
     // Draw glowing dotted points along each segment
-    final Paint glowPaint = Paint()
-      ..color = currentBubbleType.glowColor.withValues(alpha: 0.35)
-      ..maskFilter = const MaskFilter.blur(BlurStyle.normal, 3.5);
-
-    final Paint dotPaint = Paint()
-      ..color = Colors.white.withValues(alpha: 0.9)
-      ..style = PaintingStyle.fill;
-
-    const double dotSpacing = 16.0;
-
-    for (final seg in segments) {
-      final double dist = (seg.end - seg.start).distance;
-      if (dist <= 0) continue;
-      final Offset step = (seg.end - seg.start) / dist;
-
-      for (double d = 0; d < dist; d += dotSpacing) {
-        final Offset pt = seg.start + (step * d);
-        canvas.drawCircle(pt, 4.0, glowPaint);
-        canvas.drawCircle(pt, 2.2, dotPaint);
-      }
-    }
+    TrajectoryLine.render(
+      canvas,
+      segments: segments,
+      glowColor: currentBubbleType.glowColor,
+    );
 
     // Draw small target ring at the final trajectory terminus
     if (segments.isNotEmpty) {
@@ -250,57 +370,276 @@ class CannonComponent extends PositionComponent {
         ..color = currentBubbleType.baseColor.withValues(alpha: 0.75)
         ..style = PaintingStyle.stroke
         ..strokeWidth = 2.0;
+      final Paint dotPaint = Paint()
+        ..color = Colors.white.withValues(alpha: 0.9)
+        ..style = PaintingStyle.fill;
       canvas.drawCircle(targetPt, 8.0, targetPaint);
       canvas.drawCircle(targetPt, 2.5, dotPaint);
     }
   }
 
-  /// Renders the "NEXT" queue preview bubble pod slightly to the left of the cannon.
+  /// Renders the "NEXT" queue preview bubble pod with futuristic glassmorphic styling.
   void _renderNextPreviewPod(Canvas canvas) {
-    const Offset podCenter = Offset(-72, 8);
     const double podRadius = 24.0;
+
+    // Outer glow halo matching bubble color
+    final Paint glowPaint = Paint()
+      ..color = nextBubbleType.glowColor.withValues(alpha: 0.22)
+      ..maskFilter = const MaskFilter.blur(BlurStyle.normal, 10.0);
+    canvas.drawCircle(_podCenter, podRadius + 2, glowPaint);
 
     // Pod background disk
     final Paint podBg = Paint()
       ..shader = RadialGradient(
         colors: [
-          const Color(0xFF1F2B48),
-          const Color(0xFF0F1528),
-          const Color(0xFF070A14),
+          const Color(0xFF222F50),
+          const Color(0xFF12192E),
+          const Color(0xFF070B16),
         ],
-      ).createShader(Rect.fromCircle(center: podCenter, radius: podRadius));
-    canvas.drawCircle(podCenter, podRadius, podBg);
+      ).createShader(Rect.fromCircle(center: _podCenter, radius: podRadius));
+    canvas.drawCircle(_podCenter, podRadius, podBg);
 
-    // Pod glowing border
+    // Pod neon cyan border
     final Paint podBorder = Paint()
       ..style = PaintingStyle.stroke
-      ..strokeWidth = 1.5
-      ..color = const Color(0xFF00E5FF).withValues(alpha: 0.6);
-    canvas.drawCircle(podCenter, podRadius, podBorder);
+      ..strokeWidth = 1.8
+      ..color = const Color(0xFF00E5FF).withValues(alpha: 0.7);
+    canvas.drawCircle(_podCenter, podRadius, podBorder);
 
-    // "NEXT" label badge above the pod
+    // Outer tick accents
+    final Paint tickPaint = Paint()
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = 1.2
+      ..color = Colors.white.withValues(alpha: 0.4);
+    for (int deg = 0; deg < 360; deg += 90) {
+      final double rad = deg * (math.pi / 180.0);
+      final Offset p1 = Offset(
+        _podCenter.dx + math.cos(rad) * (podRadius - 3),
+        _podCenter.dy + math.sin(rad) * (podRadius - 3),
+      );
+      final Offset p2 = Offset(
+        _podCenter.dx + math.cos(rad) * (podRadius + 2),
+        _podCenter.dy + math.sin(rad) * (podRadius + 2),
+      );
+      canvas.drawLine(p1, p2, tickPaint);
+    }
+
+    // "NEXT" label badge pill above the pod
+    const double pillW = 34.0;
+    const double pillH = 13.0;
+    final Rect pillRect = Rect.fromCenter(
+      center: Offset(_podCenter.dx, _podCenter.dy - podRadius - 9.0),
+      width: pillW,
+      height: pillH,
+    );
+    final RRect pillRRect =
+        RRect.fromRectAndRadius(pillRect, const Radius.circular(6.0));
+    final Paint pillBg = Paint()..color = const Color(0xFF10172C);
+    final Paint pillBorder = Paint()
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = 1.0
+      ..color = const Color(0xFF00E5FF).withValues(alpha: 0.6);
+    canvas.drawRRect(pillRRect, pillBg);
+    canvas.drawRRect(pillRRect, pillBorder);
+
     final TextPainter tp = TextPainter(
       text: const TextSpan(
         text: 'NEXT',
         style: TextStyle(
-          color: Color(0xFFFFD600),
-          fontSize: 9,
+          color: Color(0xFF00E5FF),
+          fontSize: 8.0,
           fontWeight: FontWeight.w900,
-          letterSpacing: 1.2,
+          letterSpacing: 1.0,
         ),
       ),
       textDirection: TextDirection.ltr,
     )..layout();
-    tp.paint(canvas, Offset(podCenter.dx - (tp.width / 2), podCenter.dy - podRadius - 13));
-
-    // Next preview bubble
-    ProceduralBubbleRenderer.renderSphere(
+    tp.paint(
       canvas,
-      center: podCenter,
-      radius: 14.0,
-      bubbleType: nextBubbleType,
-      drawShadow: false,
+      Offset(_podCenter.dx - (tp.width / 2),
+          pillRect.top + (pillH - tp.height) / 2),
     );
+
+    // Next preview bubble (suppressed while animated swap is in flight)
+    if (!_isSwapping) {
+      ProceduralBubbleRenderer.renderSphere(
+        canvas,
+        center: _podCenter,
+        radius: 15.0,
+        bubbleType: nextBubbleType,
+        drawShadow: false,
+      );
+    }
+  }
+
+  /// Renders an elevated interactive arcade SWAP button with revolving dual arrows.
+  void _renderSwapButton(Canvas canvas) {
+    const double btnRadius = 15.0;
+
+    // 1. Soft interactive glow
+    final Paint glowPaint = Paint()
+      ..color = const Color(0xFFFFD600).withValues(alpha: 0.20)
+      ..maskFilter = const MaskFilter.blur(BlurStyle.normal, 8.0);
+    canvas.drawCircle(_swapBtnCenter, btnRadius + 2, glowPaint);
+
+    // 2. Beveled outer metallic rim
+    final Paint bezelPaint = Paint()
+      ..shader = const LinearGradient(
+        begin: Alignment.topLeft,
+        end: Alignment.bottomRight,
+        colors: [
+          Color(0xFF3B4D78),
+          Color(0xFF1B243B),
+          Color(0xFF0C111F),
+        ],
+      ).createShader(Rect.fromCircle(center: _swapBtnCenter, radius: btnRadius));
+    canvas.drawCircle(_swapBtnCenter, btnRadius, bezelPaint);
+
+    // 3. Inner neon cyan/magenta border
+    final Paint btnBorder = Paint()
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = 1.5
+      ..color = _isSwapping
+          ? const Color(0xFFFF007F)
+          : const Color(0xFF00E5FF).withValues(alpha: 0.85);
+    canvas.drawCircle(_swapBtnCenter, btnRadius, btnBorder);
+
+    // 4. Dual curved swap arrows icon (⇄)
+    canvas.save();
+    canvas.translate(_swapBtnCenter.dx, _swapBtnCenter.dy);
+
+    if (_isSwapping) {
+      final double progress = (_swapElapsed / _swapDuration).clamp(0.0, 1.0);
+      canvas.rotate(progress * math.pi);
+    }
+
+    final Paint arrowPaint = Paint()
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = 1.8
+      ..strokeCap = StrokeCap.round
+      ..color = const Color(0xFFFFD600);
+
+    // Upper arrow curving right
+    final Path topPath = Path()
+      ..moveTo(-6.5, -3.0)
+      ..lineTo(5.5, -3.0)
+      ..lineTo(2.5, -6.0);
+    canvas.drawPath(topPath, arrowPaint);
+
+    // Lower arrow curving left
+    final Path btmPath = Path()
+      ..moveTo(6.5, 3.0)
+      ..lineTo(-5.5, 3.0)
+      ..lineTo(-2.5, 6.0);
+    canvas.drawPath(btmPath, arrowPaint);
+
+    canvas.restore();
+
+    // 5. "SWAP" pill badge below button
+    const double pillW = 34.0;
+    const double pillH = 12.0;
+    final Rect pillRect = Rect.fromCenter(
+      center: Offset(_swapBtnCenter.dx, _swapBtnCenter.dy + btnRadius + 8.5),
+      width: pillW,
+      height: pillH,
+    );
+    final RRect pillRRect =
+        RRect.fromRectAndRadius(pillRect, const Radius.circular(5.0));
+
+    final Paint pillBg = Paint()..color = const Color(0xFF10172C);
+    final Paint pillBorder = Paint()
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = 1.0
+      ..color = const Color(0xFFFFD600).withValues(alpha: 0.6);
+    canvas.drawRRect(pillRRect, pillBg);
+    canvas.drawRRect(pillRRect, pillBorder);
+
+    final TextPainter tp = TextPainter(
+      text: const TextSpan(
+        text: 'SWAP',
+        style: TextStyle(
+          color: Color(0xFFFFD600),
+          fontSize: 7.5,
+          fontWeight: FontWeight.w900,
+          letterSpacing: 0.8,
+        ),
+      ),
+      textDirection: TextDirection.ltr,
+    )..layout();
+    tp.paint(
+      canvas,
+      Offset(_swapBtnCenter.dx - (tp.width / 2),
+          pillRect.top + (pillH - tp.height) / 2),
+    );
+  }
+
+  /// Renders the 180-degree semicircular arc orbit and scale-bounce animation
+  /// between the cannon nozzle bubble and the NEXT preview bubble.
+  void _renderSwapAnimation(Canvas canvas) {
+    final double t = (_swapElapsed / _swapDuration).clamp(0.0, 1.0);
+    // Smooth cubic easing curve
+    final double curved = Curves.easeInOutCubic.transform(t);
+
+    // 180-degree rotation angle (0 to pi radians)
+    final double theta = curved * math.pi;
+
+    // Scale-bounce: starts at 1.0, scales up to ~1.20 at midpoint, then settles to 1.0
+    final double scale = 1.0 + 0.20 * math.sin(curved * math.pi);
+
+    // Midpoint between current bubble in cannon and NEXT pod
+    final Offset mid = Offset(
+      (_turretCenter.dx + _podCenter.dx) / 2,
+      (_turretCenter.dy + _podCenter.dy) / 2,
+    );
+
+    final Offset offsetR = _turretCenter - mid;
+    final double radius = offsetR.distance;
+    final double initialAngle = math.atan2(offsetR.dy, offsetR.dx);
+
+    // Bubble A (departing cannon to NEXT pod)
+    final Offset posA = mid +
+        Offset(
+          math.cos(initialAngle + theta) * radius,
+          math.sin(initialAngle + theta) * radius,
+        );
+
+    // Bubble B (departing NEXT pod into cannon)
+    final Offset posB = mid +
+        Offset(
+          math.cos(initialAngle + math.pi + theta) * radius,
+          math.sin(initialAngle + math.pi + theta) * radius,
+        );
+
+    // Glowing orbital swoosh trail
+    final Paint trailPaint = Paint()
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = 2.2
+      ..color = const Color(0xFF00E5FF).withValues(alpha: 0.45 * (1.0 - (t - 0.5).abs() * 2));
+    canvas.drawCircle(mid, radius, trailPaint);
+
+    // Draw animated Bubble A
+    if (_animFromCurrent != null) {
+      final double rA = (bubbleRadius * 0.95) * scale;
+      ProceduralBubbleRenderer.renderSphere(
+        canvas,
+        center: posA,
+        radius: rA,
+        bubbleType: _animFromCurrent!,
+        drawShadow: false,
+      );
+    }
+
+    // Draw animated Bubble B
+    if (_animFromNext != null) {
+      final double rB = 14.0 * scale;
+      ProceduralBubbleRenderer.renderSphere(
+        canvas,
+        center: posB,
+        radius: rB,
+        bubbleType: _animFromNext!,
+        drawShadow: false,
+      );
+    }
   }
 
   /// Renders the metallic pedestal base centered at local [Offset.zero].
@@ -386,13 +725,16 @@ class CannonComponent extends PositionComponent {
     canvas.drawRect(Rect.fromLTWH(-halfW, -barrelLength, barrelWidth, 5), muzzleBand);
 
     // 2. Active ready-to-shoot bubble nestled at the barrel base (y = -6)
-    ProceduralBubbleRenderer.renderSphere(
-      canvas,
-      center: const Offset(0, -6),
-      radius: bubbleRadius * 0.95,
-      bubbleType: currentBubbleType,
-      drawShadow: false,
-    );
+    // (suppressed while animated swap is in flight)
+    if (!_isSwapping) {
+      ProceduralBubbleRenderer.renderSphere(
+        canvas,
+        center: _turretCenter,
+        radius: bubbleRadius * 0.95,
+        bubbleType: currentBubbleType,
+        drawShadow: false,
+      );
+    }
 
     // 3. Central pivot cap centered at Offset.zero
     final Paint pivotPaint = Paint()
@@ -409,10 +751,4 @@ class CannonComponent extends PositionComponent {
 
     canvas.restore();
   }
-}
-
-class _GuideSegment {
-  final Offset start;
-  final Offset end;
-  const _GuideSegment(this.start, this.end);
 }

@@ -1,29 +1,14 @@
-import 'dart:math' as math;
+import 'dart:math' show Point;
 import 'package:flame/components.dart';
-import 'bubble_color.dart';
+import '../../core/audio/audio.dart';
+import '../../core/utils/utils.dart';
+import '../../data/models/bubble_type.dart';
+import '../logic/hex_math.dart';
+import '../logic/match_engine.dart';
 import 'bubble_component.dart';
 import 'bullet_bubble.dart';
 
-/// Point representation for integer grid coordinates.
-class GridCoord {
-  final int row;
-  final int col;
-  const GridCoord(this.row, this.col);
-
-  @override
-  bool operator ==(Object other) =>
-      identical(this, other) ||
-      other is GridCoord &&
-          runtimeType == other.runtimeType &&
-          row == other.row &&
-          col == other.col;
-
-  @override
-  int get hashCode => row.hashCode ^ col.hashCode;
-
-  @override
-  String toString() => 'GridCoord(row: $row, col: $col)';
-}
+export '../logic/hex_math.dart' show GridCoord;
 
 /// Flame Component managing the Odd-r staggered hexagonal bubble grid.
 ///
@@ -64,21 +49,24 @@ class GridManager extends Component {
   /// Dynamic 2D matrix storing active bubbles.
   late final List<List<BubbleComponent?>> _grid;
 
+  /// Tracks active falling bubbles during drop sequences.
+  final List<BubbleComponent> _fallingBubbles = [];
+
   /// Returns the top ceiling boundary Y coordinate touching the top edge of row 0 bubbles.
   double get ceilingY => topOffset - radius;
 
   /// Returns the column capacity for a given [row] index.
-  int getColumnsForRow(int row) => (row % 2 == 0) ? evenColumns : oddColumns;
+  int getColumnsForRow(int row) =>
+      HexMath.getColumnsForRow(row, evenCols: evenColumns, oddCols: oddColumns);
 
   /// Calculates the absolute canvas (x, y) center position for cell [row], [col]
   /// following Odd-r staggered hexagonal mathematics.
-  Vector2 getCanvasPosition(int row, int col) {
-    final double x = (row % 2 == 0)
-        ? (col * (2 * radius)) + radius
-        : (col * (2 * radius)) + (2 * radius);
-    final double y = topOffset + (row * (radius * math.sqrt(3)));
-    return Vector2(x, y);
-  }
+  Vector2 getCanvasPosition(int row, int col) => HexMath.getCanvasPosition(
+        row: row,
+        col: col,
+        radius: radius,
+        topOffset: topOffset,
+      );
 
   /// Checks whether cell [row], [col] is currently occupied by a bubble.
   bool isCellOccupied(int row, int col) {
@@ -130,6 +118,28 @@ class GridManager extends Component {
     bubble?.removeFromParent();
   }
 
+  /// Batches the popping of matched bubbles:
+  /// - Dispatches exactly ONE sound trigger and ONE haptic impulse for the entire cluster.
+  /// - Detaches all matched bubbles from the matrix and initiates their pop animation.
+  /// - Returns the list of popped [BubbleComponent] instances.
+  List<BubbleComponent> batchPopMatches(List<Point<int>> matches) {
+    if (matches.isEmpty) return const [];
+
+    // Trigger exactly ONE audio and ONE haptic impulse for the whole cluster
+    SoundManager.instance.playPop();
+    HapticsHelper.lightImpact();
+
+    final List<BubbleComponent> popped = [];
+    for (final Point<int> pt in matches) {
+      final BubbleComponent? bubble = detachBubbleAt(pt.x, pt.y);
+      if (bubble != null) {
+        bubble.pop();
+        popped.add(bubble);
+      }
+    }
+    return popped;
+  }
+
   /// Retrieves the bubble at [row], [col] or null if cell is empty or out of bounds.
   BubbleComponent? getBubbleAt(int row, int col) {
     if (row < 0 || row >= maxRows) return null;
@@ -138,68 +148,59 @@ class GridManager extends Component {
     return _grid[row][col];
   }
 
+  /// Discovers all floating bubbles that have become disconnected from the ceiling anchor.
+  List<Point<int>> findFloatingBubbles() => MatchEngine.findFloatingBubbles(
+        isOccupied: isCellOccupied,
+        maxRows: maxRows,
+        evenCols: evenColumns,
+        oddCols: oddColumns,
+      );
+
+  /// Discovers all disconnected orphan bubbles via BFS ceiling traversal,
+  /// detaches them from the grid matrix immediately, and initiates their falling animation.
+  /// Eliminates ghost duplicates by animating the exact same BubbleComponent instances.
+  List<BubbleComponent> dropFloatingBubbles() {
+    final List<Point<int>> floating = findFloatingBubbles();
+    final List<BubbleComponent> dropped = [];
+
+    for (final Point<int> pt in floating) {
+      final BubbleComponent? bubble = _grid[pt.x][pt.y];
+      // CRITICAL: Immediately clear data reference so grid no longer considers this cell occupied
+      _grid[pt.x][pt.y] = null;
+
+      if (bubble != null) {
+        bubble.dropAsFloating();
+        _fallingBubbles.add(bubble);
+        dropped.add(bubble);
+      }
+    }
+
+    return dropped;
+  }
+
+  /// Whether any active bubbles remain anchored on the grid matrix.
+  bool get hasAnyBubblesOnGrid => _grid.any((row) => row.any((b) => b != null));
+
+  /// Whether any bubbles are actively falling down the screen.
+  bool get hasFallingBubbles {
+    _fallingBubbles.removeWhere((b) => !b.isDropping || (!b.isMounted && b.parent == null));
+    return children.whereType<BubbleComponent>().any((b) => b.isDropping) ||
+        _fallingBubbles.isNotEmpty;
+  }
+
   /// Evaluates Euclidean distance to identify the optimal empty hexagonal grid
   /// cell to anchor an incoming projectile at [impactPosition].
-  GridCoord findBestSnapCell(Vector2 impactPosition, BubbleComponent? hitBubble) {
-    if (hitBubble == null) {
-      // Ceiling impact with no bubble: search empty slots in Row 0
-      final int row0Cols = getColumnsForRow(0);
-      int bestCol = 0;
-      double minDistance = double.infinity;
-
-      for (int c = 0; c < row0Cols; c++) {
-        if (!isCellOccupied(0, c)) {
-          final Vector2 cellPos = getCanvasPosition(0, c);
-          final double dist = (cellPos - impactPosition).length;
-          if (dist < minDistance) {
-            minDistance = dist;
-            bestCol = c;
-          }
-        }
-      }
-      return GridCoord(0, bestCol);
-    }
-
-    // Bubble collision: check all empty neighbors around hitBubble
-    final List<GridCoord> neighbors = getNeighbors(hitBubble.row, hitBubble.col);
-    final List<GridCoord> emptyNeighbors =
-        neighbors.where((n) => !isCellOccupied(n.row, n.col)).toList();
-
-    if (emptyNeighbors.isNotEmpty) {
-      GridCoord best = emptyNeighbors.first;
-      double minDistance = double.infinity;
-
-      for (final GridCoord n in emptyNeighbors) {
-        final Vector2 cellPos = getCanvasPosition(n.row, n.col);
-        final double dist = (cellPos - impactPosition).length;
-        if (dist < minDistance) {
-          minDistance = dist;
-          best = n;
-        }
-      }
-      return best;
-    }
-
-    // Fallback: search all available empty cells in the grid closest to impact
-    GridCoord fallback = const GridCoord(0, 0);
-    double minDistance = double.infinity;
-
-    for (int r = 0; r < maxRows; r++) {
-      final int cols = getColumnsForRow(r);
-      for (int c = 0; c < cols; c++) {
-        if (!isCellOccupied(r, c)) {
-          final Vector2 cellPos = getCanvasPosition(r, c);
-          final double dist = (cellPos - impactPosition).length;
-          if (dist < minDistance) {
-            minDistance = dist;
-            fallback = GridCoord(r, c);
-          }
-        }
-      }
-    }
-
-    return fallback;
-  }
+  GridCoord findBestSnapCell(Vector2 impactPosition, BubbleComponent? hitBubble) =>
+      HexMath.findBestSnapCell(
+        impactPosition: impactPosition,
+        radius: radius,
+        topOffset: topOffset,
+        isOccupied: isCellOccupied,
+        hitCell: hitBubble != null ? GridCoord(hitBubble.row, hitBubble.col) : null,
+        maxRows: maxRows,
+        evenCols: evenColumns,
+        oddCols: oddColumns,
+      );
 
   /// Snaps [bullet] into the optimal empty grid cell, creates a static [BubbleComponent],
   /// attaches it to the board, and removes the dynamic projectile.
@@ -261,7 +262,7 @@ class GridManager extends Component {
   }
 
   /// Whether all bubbles on the board have been cleared (Win condition).
-  bool get allBubblesCleared => totalActiveBubbles == 0;
+  bool get allBubblesCleared => !hasAnyBubblesOnGrid && !hasFallingBubbles;
 
   /// Clears all bubbles from the board and removes them from the component tree.
   void clear() {
@@ -275,37 +276,21 @@ class GridManager extends Component {
         }
       }
     }
+    // Also remove any active falling bubbles
+    children.whereType<BubbleComponent>().where((b) => b.isDropping).toList().forEach(
+      (b) => b.removeFromParent(),
+    );
+    _fallingBubbles.clear();
   }
 
   /// Returns the 6 adjacent hexagonal neighbor coordinates in Odd-r horizontal layout.
-  List<GridCoord> getNeighbors(int row, int col) {
-    final List<GridCoord> neighbors = [];
-
-    // Left and Right
-    neighbors.add(GridCoord(row, col - 1));
-    neighbors.add(GridCoord(row, col + 1));
-
-    if (row % 2 == 0) {
-      // Even row: top and bottom shifted left
-      neighbors.add(GridCoord(row - 1, col - 1));
-      neighbors.add(GridCoord(row - 1, col));
-      neighbors.add(GridCoord(row + 1, col - 1));
-      neighbors.add(GridCoord(row + 1, col));
-    } else {
-      // Odd row: top and bottom shifted right
-      neighbors.add(GridCoord(row - 1, col));
-      neighbors.add(GridCoord(row - 1, col + 1));
-      neighbors.add(GridCoord(row + 1, col));
-      neighbors.add(GridCoord(row + 1, col + 1));
-    }
-
-    // Filter valid grid bounds
-    return neighbors.where((n) {
-      if (n.row < 0 || n.row >= maxRows) return false;
-      final int cols = getColumnsForRow(n.row);
-      return n.col >= 0 && n.col < cols;
-    }).toList();
-  }
+  List<GridCoord> getNeighbors(int row, int col) => HexMath.getNeighbors(
+        row: row,
+        col: col,
+        maxRows: maxRows,
+        evenCols: evenColumns,
+        oddCols: oddColumns,
+      );
 
   /// Returns a flat list of all active non-null bubbles currently on the grid.
   List<BubbleComponent> get activeBubbles {

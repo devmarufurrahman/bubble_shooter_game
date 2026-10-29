@@ -1,12 +1,21 @@
 import 'dart:math' as math;
 import 'package:flame/game.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:bubble_shooter_game/core/audio/sound_manager.dart';
+import 'package:bubble_shooter_game/game/components/ammo_inventory_component.dart';
 import 'package:bubble_shooter_game/game/components/bubble_color.dart';
 import 'package:bubble_shooter_game/game/components/bullet_bubble.dart';
 import 'package:bubble_shooter_game/game/components/cannon_component.dart';
 import 'package:bubble_shooter_game/game/components/grid_manager.dart';
 
 void main() {
+  TestWidgetsFlutterBinding.ensureInitialized();
+
+  setUp(() {
+    SoundManager.enableAudio = false;
+  });
+
   group('CannonComponent Tests', () {
     const double gameWidth = 400.0;
     const double gameHeight = 700.0;
@@ -83,6 +92,120 @@ void main() {
             cannon.nextBubbleType == BubbleType.blue,
         isTrue,
       );
+    });
+  });
+
+  group('Tactical Bubble Swap Mechanism Tests', () {
+    const double gameWidth = 400.0;
+    const double gameHeight = 700.0;
+    const double ceilingY = 35.0;
+    const double bubbleRadius = 25.0;
+
+    late CannonComponent cannon;
+
+    setUp(() {
+      cannon = CannonComponent(
+        gameWidth: gameWidth,
+        gameHeight: gameHeight,
+        ceilingY: ceilingY,
+        bubbleRadius: bubbleRadius,
+        position: Vector2(200, 630),
+      );
+      cannon.onLoad();
+    });
+
+    test('swapBubbles exchanges currentBubbleType and nextBubbleType', () {
+      cannon.currentBubbleType = BubbleType.red;
+      cannon.nextBubbleType = BubbleType.blue;
+
+      final success = cannon.swapBubbles();
+
+      expect(success, isTrue);
+      expect(cannon.currentBubbleType, equals(BubbleType.blue));
+      expect(cannon.nextBubbleType, equals(BubbleType.red));
+      expect(cannon.isSwapping, isTrue);
+    });
+
+    test('swapBubbles guard: disallowed while bullet is actively in flight', () {
+      cannon.currentBubbleType = BubbleType.green;
+      cannon.nextBubbleType = BubbleType.purple;
+
+      // When bullet is flying
+      final success = cannon.swapBubbles(isBulletFlying: true);
+
+      expect(success, isFalse);
+      // Types remain unchanged
+      expect(cannon.currentBubbleType, equals(BubbleType.green));
+      expect(cannon.nextBubbleType, equals(BubbleType.purple));
+      expect(cannon.isSwapping, isFalse);
+    });
+
+    test('swapBubbles guard: disallowed while already swapping', () {
+      cannon.currentBubbleType = BubbleType.red;
+      cannon.nextBubbleType = BubbleType.yellow;
+
+      expect(cannon.swapBubbles(), isTrue);
+      expect(cannon.isSwapping, isTrue);
+
+      // Second immediate call while animation in progress
+      expect(cannon.swapBubbles(), isFalse);
+    });
+
+    test('checkSwapHit detects tap on NEXT pod and SWAP button', () {
+      // Cannon position is (200, 630)
+      // NEXT pod is at (200 - 118, 630 + 6) = (82, 636)
+      expect(cannon.checkSwapHit(Vector2(82, 636)), isTrue);
+
+      // SWAP button is at (200 - 64, 630 + 6) = (136, 636)
+      expect(cannon.checkSwapHit(Vector2(136, 636)), isTrue);
+
+      // Distant point should not trigger swap
+      expect(cannon.checkSwapHit(Vector2(200, 300)), isFalse);
+      expect(cannon.checkSwapHit(Vector2(350, 630)), isFalse);
+    });
+
+    test('Animation completes and resets isSwapping after 0.15s', () {
+      cannon.swapBubbles();
+      expect(cannon.isSwapping, isTrue);
+
+      cannon.update(0.10);
+      expect(cannon.isSwapping, isTrue);
+
+      cannon.update(0.06); // total 0.16s >= 0.15s
+      expect(cannon.isSwapping, isFalse);
+    });
+  });
+
+  group('Visual Ammo Inventory Tests', () {
+    test('Initializes with shotsNotifier value', () {
+      final notifier = ValueNotifier<int>(12);
+      final inventory = AmmoInventoryComponent(shotsNotifier: notifier);
+      inventory.onLoad();
+
+      expect(inventory.shotsRemaining, equals(12));
+    });
+
+    test('Decreasing shotsNotifier triggers pop transition', () {
+      final notifier = ValueNotifier<int>(5);
+      final inventory = AmmoInventoryComponent(shotsNotifier: notifier);
+      inventory.onLoad();
+
+      notifier.value = 4;
+      expect(inventory.shotsRemaining, equals(4));
+
+      // Trigger explicit pop
+      inventory.triggerPopAnimation(BubbleType.blue);
+      inventory.update(0.1);
+      inventory.update(0.15); // > 0.20s
+    });
+
+    test('setShotsRemaining resets visual count', () {
+      final notifier = ValueNotifier<int>(3);
+      final inventory = AmmoInventoryComponent(shotsNotifier: notifier);
+      inventory.onLoad();
+
+      inventory.setShotsRemaining(20);
+      expect(inventory.shotsRemaining, equals(20));
     });
   });
 

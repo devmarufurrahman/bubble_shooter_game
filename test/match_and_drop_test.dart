@@ -1,4 +1,5 @@
 import 'dart:math' show Point;
+import 'package:flame/collisions.dart';
 import 'package:flame/components.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:bubble_shooter_game/game/components/bubble_color.dart';
@@ -173,21 +174,19 @@ void main() {
       expect(floating.first, equals(const Point(2, 2)));
     });
 
-    test('dropFloatingBubbles detaches orphans and spawns falling components', () {
-      final world = Component();
-
+    test('dropFloatingBubbles detaches orphans and triggers dropAsFloating directly', () {
       // Place isolated bubble
-      grid.setBubbleAt(
-        3,
-        1,
-        BubbleComponent(row: 3, col: 1, bubbleType: BubbleType.blue, radius: 25.0),
-      );
+      final bubble = BubbleComponent(row: 3, col: 1, bubbleType: BubbleType.blue, radius: 25.0);
+      grid.setBubbleAt(3, 1, bubble);
 
-      final dropped = MatchChecker.dropFloatingBubbles(grid, world);
+      final dropped = MatchChecker.dropFloatingBubbles(grid);
 
       expect(dropped.length, equals(1));
-      expect(grid.isCellOccupied(3, 1), isFalse); // Detached from grid
-      expect(world.children.length, equals(1));   // Added to world
+      expect(identical(dropped.first, bubble), isTrue); // Exact same component instance, no ghost duplicates
+      expect(grid.isCellOccupied(3, 1), isFalse); // Detached from grid data
+      expect(bubble.isDropping, isTrue); // Animated drop started
+      expect(grid.hasFallingBubbles, isTrue);
+      expect(grid.hasAnyBubblesOnGrid, isFalse);
     });
   });
 
@@ -243,6 +242,84 @@ void main() {
       expect(inserted.bubbleType, equals(BubbleType.red));
       expect(grid.isCellOccupied(0, 0), isTrue);
       expect(bullet.parent, isNull); // Removed from parent
+    });
+  });
+
+  group('Floating Orphan Drop & Ghost Bubble Prevention Tests', () {
+    late GridManager grid;
+
+    setUp(() {
+      grid = GridManager(radius: 25.0, topOffset: 60.0, maxRows: 14);
+    });
+
+    test('dropAsFloating activates gravity physics and disables collision hitbox', () async {
+      final bubble = BubbleComponent(
+        row: 2,
+        col: 2,
+        bubbleType: BubbleType.purple,
+        radius: 25.0,
+      );
+      grid.setBubbleAt(2, 2, bubble);
+      await bubble.onLoad();
+
+      expect(bubble.isDropping, isFalse);
+      expect(bubble.hitbox, isNotNull);
+
+      bubble.dropAsFloating();
+
+      expect(bubble.isDropping, isTrue);
+      expect(bubble.hitbox!.collisionType, equals(CollisionType.inactive));
+
+      final double initialY = bubble.position.y;
+      bubble.update(0.1); // Gravity acceleration
+      expect(bubble.position.y, greaterThan(initialY));
+    });
+
+    test('allBubblesCleared is false while falling bubbles are active (prevents premature win)', () {
+      final bubble = BubbleComponent(
+        row: 3,
+        col: 1,
+        bubbleType: BubbleType.yellow,
+        radius: 25.0,
+      );
+      grid.setBubbleAt(3, 1, bubble);
+
+      // Detach and start falling
+      final dropped = grid.dropFloatingBubbles();
+      expect(dropped.length, equals(1));
+      expect(identical(dropped.first, bubble), isTrue);
+
+      // Grid matrix is empty, but falling bubbles are still in transit!
+      expect(grid.hasAnyBubblesOnGrid, isFalse);
+      expect(grid.hasFallingBubbles, isTrue);
+      expect(grid.allBubblesCleared, isFalse); // Win dialog must NOT trigger yet
+
+      // Simulate falling until bubble exits past bottom (y > 750)
+      for (int i = 0; i < 20; i++) {
+        bubble.update(0.1);
+      }
+
+      // Now falling bubble has despawned and removed itself
+      expect(grid.hasFallingBubbles, isFalse);
+      expect(grid.allBubblesCleared, isTrue); // Now win dialog can safely trigger
+    });
+
+    test('grid.clear() purges active falling bubbles immediately on level restart', () {
+      final bubble = BubbleComponent(
+        row: 4,
+        col: 2,
+        bubbleType: BubbleType.green,
+        radius: 25.0,
+      );
+      grid.setBubbleAt(4, 2, bubble);
+
+      grid.dropFloatingBubbles();
+      expect(grid.hasFallingBubbles, isTrue);
+
+      grid.clear();
+      expect(grid.hasFallingBubbles, isFalse);
+      expect(grid.hasAnyBubblesOnGrid, isFalse);
+      expect(grid.allBubblesCleared, isTrue);
     });
   });
 }

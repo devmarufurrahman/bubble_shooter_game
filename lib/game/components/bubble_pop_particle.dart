@@ -12,10 +12,30 @@ class BubblePopParticle extends ParticleSystemComponent {
     required Vector2 position,
     required BubbleType bubbleType,
     int particleCount = 12,
+    this.maxDuration = 0.45,
   }) : super(
           position: position,
           particle: _buildPopParticle(bubbleType, particleCount),
         );
+
+  /// Maximum permissible lifetime before forcing self-removal to prevent leaks.
+  final double maxDuration;
+  double _elapsed = 0.0;
+
+  @override
+  void update(double dt) {
+    super.update(dt);
+    _elapsed += dt;
+    if (_elapsed >= maxDuration || (particle?.shouldRemove ?? false)) {
+      removeFromParent();
+    }
+  }
+
+  @override
+  void onRemove() {
+    particle = null;
+    super.onRemove();
+  }
 
   /// Constructs the composite particle hierarchy using [AcceleratedParticle] and [ComputedParticle].
   static Particle _buildPopParticle(BubbleType bubbleType, int count) {
