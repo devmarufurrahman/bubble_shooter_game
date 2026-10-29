@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "558359392948",
+    "project_id": "testing-58e68",
+    "storage_bucket": "testing-58e68.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:558359392948:android:cb4a645c4ae12aa7dc1de1",
+        "android_client_info": {
+          "package_name": "com.adaptix.bubble_shooter_game"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyCbjoYPcZ4ruY_Cz-x_rw_0GZmB19K4UoE"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}
