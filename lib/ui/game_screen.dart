@@ -59,7 +59,7 @@ class _GameScreenState extends State<GameScreen> {
                     onResumePressed: () => game.overlays.remove('pauseMenu'),
                     onRestartPressed: () {
                       game.overlays.remove('pauseMenu');
-                      // Level restart hook for Task 2
+                      game.restartLevel();
                     },
                     onExitPressed: () {
                       game.overlays.remove('pauseMenu');
