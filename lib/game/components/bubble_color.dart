@@ -55,6 +55,9 @@ extension BubbleColorExtension on BubbleType {
     }
   }
 
+  /// Alias for [lightTint].
+  Color get highlightColor => lightTint;
+
   /// Deep shadow tint for outer edge gradient falloff.
   Color get shadowTint {
     switch (this) {

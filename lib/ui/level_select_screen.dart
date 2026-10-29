@@ -6,7 +6,7 @@ import 'game_screen.dart';
 import 'widgets/arcade_background.dart';
 
 /// Screen allowing players to choose from 10 arcade levels, inspect high scores,
-/// and manage their Google authentication state.
+/// view earned star ratings, and manage their authentication state.
 class LevelSelectScreen extends StatefulWidget {
   const LevelSelectScreen({super.key});
 
@@ -15,56 +15,54 @@ class LevelSelectScreen extends StatefulWidget {
 }
 
 class _LevelSelectScreenState extends State<LevelSelectScreen> {
-  final LevelManager _levelManager = LevelManager.instance;
   final AuthService _authService = AuthService.instance;
 
   int _unlockedLevel = 1;
   final Map<int, int> _highScores = {};
+  final Map<int, int> _starsMap = {};
   bool _isLoading = true;
 
   @override
   void initState() {
     super.initState();
-    _loadLevelData();
+    _loadProgress();
   }
 
-  Future<void> _loadLevelData() async {
-    setState(() => _isLoading = true);
-    final int unlocked = await _levelManager.getUnlockedLevel();
+  /// Reads unlocked level progress, high scores, and earned stars for all 10 levels,
+  /// then triggers a reactive UI rebuild.
+  Future<void> _loadProgress() async {
+    final int unlocked = await LevelManager.getUnlockedLevel();
     final Map<int, int> scores = {};
+    final Map<int, int> stars = {};
 
     for (int i = 1; i <= LevelManager.totalLevels; i++) {
-      scores[i] = await _levelManager.getHighScore(i);
+      scores[i] = await LevelManager.getHighScore(i);
+      stars[i] = await LevelManager.getStars(i);
     }
 
     if (mounted) {
       setState(() {
         _unlockedLevel = unlocked;
-        _highScores.addAll(scores);
+        _highScores
+          ..clear()
+          ..addAll(scores);
+        _starsMap
+          ..clear()
+          ..addAll(stars);
         _isLoading = false;
       });
     }
   }
 
+  /// Launches the selected stage and automatically re-fetches latest stars & score upon return.
   Future<void> _openLevel(int level) async {
-    await Navigator.of(context).push(
-      PageRouteBuilder(
-        pageBuilder: (context, animation, secondaryAnimation) =>
-            GameScreen(levelNumber: level),
-        transitionsBuilder: (context, animation, secondaryAnimation, child) {
-          return FadeTransition(
-            opacity: CurvedAnimation(
-              parent: animation,
-              curve: Curves.easeInOut,
-            ),
-            child: child,
-          );
-        },
+    await Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (_) => GameScreen(levelNumber: level),
       ),
     );
-
-    // Refresh unlocks & high scores on return
-    _loadLevelData();
+    _loadProgress();
   }
 
   Future<void> _confirmSignOut() async {
@@ -133,7 +131,7 @@ class _LevelSelectScreenState extends State<LevelSelectScreen> {
 
               const SizedBox(height: 8),
 
-              // Title Header
+              // Title Header & Campaign Progress Badge
               Padding(
                 padding: const EdgeInsets.symmetric(horizontal: 24.0, vertical: 8.0),
                 child: Row(
@@ -206,7 +204,6 @@ class _LevelSelectScreenState extends State<LevelSelectScreen> {
                       )
                     : LayoutBuilder(
                         builder: (context, constraints) {
-                          // Responsive column calculation (2 columns for phones, up to 4 for tablets)
                           final int crossAxisCount = constraints.maxWidth > 700
                               ? 4
                               : (constraints.maxWidth > 500 ? 3 : 2);
@@ -216,7 +213,7 @@ class _LevelSelectScreenState extends State<LevelSelectScreen> {
                             physics: const BouncingScrollPhysics(),
                             gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
                               crossAxisCount: crossAxisCount,
-                              childAspectRatio: 0.96,
+                              childAspectRatio: 0.94,
                               crossAxisSpacing: 16,
                               mainAxisSpacing: 16,
                             ),
@@ -225,11 +222,13 @@ class _LevelSelectScreenState extends State<LevelSelectScreen> {
                               final int level = index + 1;
                               final bool isUnlocked = level <= _unlockedLevel;
                               final int score = _highScores[level] ?? 0;
+                              final int stars = _starsMap[level] ?? 0;
 
                               return _LevelGridCard(
                                 level: level,
                                 isUnlocked: isUnlocked,
                                 highScore: score,
+                                stars: stars,
                                 onTap: () => _openLevel(level),
                               );
                             },
@@ -397,31 +396,24 @@ class _DefaultAvatarLetter extends StatelessWidget {
   }
 }
 
-/// Visual card presenting a level with lock/unlock status, high score, and stars.
+/// Visual card presenting a level with lock/unlock status, high score, and earned stars.
 class _LevelGridCard extends StatelessWidget {
   const _LevelGridCard({
     required this.level,
     required this.isUnlocked,
     required this.highScore,
+    required this.stars,
     required this.onTap,
   });
 
   final int level;
   final bool isUnlocked;
   final int highScore;
+  final int stars;
   final VoidCallback onTap;
-
-  int _calculateStars(int score) {
-    if (score >= 2500) return 3;
-    if (score >= 1000) return 2;
-    if (score > 0) return 1;
-    return 0;
-  }
 
   @override
   Widget build(BuildContext context) {
-    final int stars = _calculateStars(highScore);
-
     return Material(
       color: Colors.transparent,
       borderRadius: BorderRadius.circular(20),
@@ -486,7 +478,7 @@ class _LevelGridCard extends StatelessWidget {
                 ],
               ),
 
-              // Center Visual
+              // Center Visual: Level number & High Score
               if (isUnlocked)
                 Column(
                   mainAxisSize: MainAxisSize.min,
@@ -496,12 +488,13 @@ class _LevelGridCard extends StatelessWidget {
                       style: const TextStyle(
                         color: Colors.white,
                         fontWeight: FontWeight.w900,
-                        fontSize: 34,
+                        fontSize: 32,
                         letterSpacing: 1.0,
                       ),
                     ),
+                    const SizedBox(height: 2),
                     Text(
-                      highScore > 0 ? 'BEST: $highScore' : 'READY',
+                      'HIGH: $highScore',
                       style: TextStyle(
                         color: highScore > 0
                             ? const Color(0xFFFFD600)
@@ -535,38 +528,25 @@ class _LevelGridCard extends StatelessWidget {
                   ],
                 ),
 
-              // Bottom Star Bar
-              _LevelStarBar(stars: stars, isUnlocked: isUnlocked),
+              // Bottom Star Bar: 3 stars rendered dynamically
+              Row(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: List.generate(3, (starIndex) {
+                  final bool earned = isUnlocked && starIndex < stars;
+                  return Padding(
+                    padding: const EdgeInsets.symmetric(horizontal: 2.0),
+                    child: Icon(
+                      earned ? Icons.star : Icons.star_border,
+                      color: earned ? Colors.amber : Colors.white24,
+                      size: 20,
+                    ),
+                  );
+                }),
+              ),
             ],
           ),
         ),
       ),
-    );
-  }
-}
-
-/// Star rating indicator (0 to 3 stars) based on high score.
-class _LevelStarBar extends StatelessWidget {
-  const _LevelStarBar({
-    required this.stars,
-    required this.isUnlocked,
-  });
-
-  final int stars;
-  final bool isUnlocked;
-
-  @override
-  Widget build(BuildContext context) {
-    return Row(
-      mainAxisAlignment: MainAxisAlignment.center,
-      children: List.generate(3, (index) {
-        final bool earned = isUnlocked && index < stars;
-        return Icon(
-          earned ? Icons.star_rounded : Icons.star_outline_rounded,
-          color: earned ? const Color(0xFFFFD600) : Colors.white12,
-          size: 18,
-        );
-      }),
     );
   }
 }

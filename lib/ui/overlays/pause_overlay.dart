@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import '../../game/audio/sound_manager.dart';
 import '../../game/bubble_shooter_game.dart';
 
 /// Arcade glassmorphic pause dialog overlay.
@@ -62,7 +63,52 @@ class PauseOverlay extends StatelessWidget {
                   fontWeight: FontWeight.bold,
                 ),
               ),
-              const SizedBox(height: 28),
+              const SizedBox(height: 16),
+              // Sound Effects Settings Toggle
+              ValueListenableBuilder<bool>(
+                valueListenable: SoundManager.instance.isMutedNotifier,
+                builder: (context, isMuted, _) {
+                  return Material(
+                    color: Colors.transparent,
+                    child: InkWell(
+                      onTap: () => SoundManager.instance.toggleMute(),
+                      borderRadius: BorderRadius.circular(12),
+                      child: Container(
+                        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                        decoration: BoxDecoration(
+                          color: const Color(0xFF19203C),
+                          borderRadius: BorderRadius.circular(12),
+                          border: Border.all(
+                            color: isMuted ? Colors.white30 : const Color(0xFF00E5FF),
+                            width: 1.2,
+                          ),
+                        ),
+                        child: Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            Icon(
+                              isMuted ? Icons.volume_off_rounded : Icons.volume_up_rounded,
+                              size: 18,
+                              color: isMuted ? const Color(0xFFFF5252) : const Color(0xFF00E5FF),
+                            ),
+                            const SizedBox(width: 8),
+                            Text(
+                              isMuted ? 'AUDIO: MUTED' : 'AUDIO: ACTIVE',
+                              style: TextStyle(
+                                color: isMuted ? Colors.white54 : const Color(0xFF00E5FF),
+                                fontWeight: FontWeight.w800,
+                                fontSize: 11,
+                                letterSpacing: 1.0,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ),
+                  );
+                },
+              ),
+              const SizedBox(height: 20),
               _OverlayButton(
                 label: 'RESUME',
                 icon: Icons.play_arrow_rounded,

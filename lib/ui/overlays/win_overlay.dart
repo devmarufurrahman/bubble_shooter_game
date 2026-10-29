@@ -5,7 +5,7 @@ import '../../levels/level_manager.dart';
 import '../game_screen.dart';
 
 /// Arcade glassmorphic victory overlay displayed upon clearing the stage.
-class WinOverlay extends StatelessWidget {
+class WinOverlay extends StatefulWidget {
   const WinOverlay({
     super.key,
     required this.game,
@@ -13,16 +13,39 @@ class WinOverlay extends StatelessWidget {
 
   final BubbleShooterGame game;
 
-  int _calculateStars(int remaining, int maxShots) {
-    if (remaining >= (maxShots * 0.5).round()) return 3;
-    if (remaining >= (maxShots * 0.25).round()) return 2;
+  /// Calculates earned stars (1 to 3) based on shots remaining relative to [maxShots].
+  static int calculateStars(int remainingShots, int maxShots) {
+    if (remainingShots >= (maxShots * 0.5).round()) return 3;
+    if (remainingShots >= (maxShots * 0.25).round()) return 2;
     return 1;
   }
 
   @override
+  State<WinOverlay> createState() => _WinOverlayState();
+}
+
+class _WinOverlayState extends State<WinOverlay> {
+  late final int _stars;
+
+  @override
+  void initState() {
+    super.initState();
+    final LevelConfig config = LevelConfig.getLevel(widget.game.levelNumber);
+    _stars = WinOverlay.calculateStars(widget.game.shotsRemaining, config.maxShots);
+    _saveProgress();
+  }
+
+  Future<void> _saveProgress() async {
+    await LevelManager.saveLevelProgress(
+      widget.game.levelNumber,
+      widget.game.currentScore,
+      _stars,
+    );
+  }
+
+  @override
   Widget build(BuildContext context) {
-    final LevelConfig config = LevelConfig.getLevel(game.levelNumber);
-    final int stars = _calculateStars(game.shotsRemaining, config.maxShots);
+    final LevelConfig config = LevelConfig.getLevel(widget.game.levelNumber);
 
     return Container(
       color: Colors.black.withValues(alpha: 0.8),
@@ -63,7 +86,7 @@ class WinOverlay extends StatelessWidget {
               ),
               const SizedBox(height: 6),
               Text(
-                'STAGE ${game.levelNumber.toString().padLeft(2, '0')}',
+                'STAGE ${widget.game.levelNumber.toString().padLeft(2, '0')}',
                 style: TextStyle(
                   color: Colors.white.withValues(alpha: 0.7),
                   fontSize: 12,
@@ -77,7 +100,7 @@ class WinOverlay extends StatelessWidget {
               Row(
                 mainAxisAlignment: MainAxisAlignment.center,
                 children: List.generate(3, (index) {
-                  final bool earned = index < stars;
+                  final bool earned = index < _stars;
                   return Padding(
                     padding: const EdgeInsets.symmetric(horizontal: 6.0),
                     child: Icon(
@@ -91,7 +114,7 @@ class WinOverlay extends StatelessWidget {
 
               const SizedBox(height: 18),
               Text(
-                'FINAL SCORE: ${game.currentScore}',
+                'FINAL SCORE: ${widget.game.currentScore}',
                 style: const TextStyle(
                   color: Color(0xFF00E5FF),
                   fontSize: 16,
@@ -101,7 +124,7 @@ class WinOverlay extends StatelessWidget {
               ),
               const SizedBox(height: 4),
               Text(
-                'SHOTS REMAINING: ${game.shotsRemaining} / ${config.maxShots}',
+                'SHOTS REMAINING: ${widget.game.shotsRemaining} / ${config.maxShots}',
                 style: TextStyle(
                   color: Colors.white.withValues(alpha: 0.6),
                   fontSize: 11,
@@ -113,17 +136,17 @@ class WinOverlay extends StatelessWidget {
               const SizedBox(height: 28),
 
               // Progression Buttons
-              if (game.levelNumber < LevelManager.totalLevels) ...[
+              if (widget.game.levelNumber < LevelManager.totalLevels) ...[
                 _WinButton(
                   label: 'NEXT LEVEL',
                   icon: Icons.arrow_forward_rounded,
                   borderColor: const Color(0xFF00E5FF),
                   onPressed: () {
-                    game.resumeEngine();
-                    game.overlays.remove('WinOverlay');
+                    widget.game.resumeEngine();
+                    widget.game.overlays.remove('WinOverlay');
                     Navigator.of(context).pushReplacement(
                       MaterialPageRoute(
-                        builder: (_) => GameScreen(levelNumber: game.levelNumber + 1),
+                        builder: (_) => GameScreen(levelNumber: widget.game.levelNumber + 1),
                       ),
                     );
                   },
@@ -135,8 +158,8 @@ class WinOverlay extends StatelessWidget {
                 icon: Icons.grid_view_rounded,
                 borderColor: const Color(0xFFFF007F),
                 onPressed: () {
-                  game.resumeEngine();
-                  game.overlays.remove('WinOverlay');
+                  widget.game.resumeEngine();
+                  widget.game.overlays.remove('WinOverlay');
                   Navigator.of(context).maybePop();
                 },
               ),
@@ -202,4 +225,3 @@ class _WinButton extends StatelessWidget {
     );
   }
 }
-

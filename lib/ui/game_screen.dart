@@ -1,5 +1,6 @@
 import 'package:flame/game.dart';
 import 'package:flutter/material.dart';
+import '../game/audio/sound_manager.dart';
 import '../game/bubble_shooter_game.dart';
 import '../levels/level_manager.dart';
 import 'overlays/game_over_overlay.dart';
@@ -211,11 +212,28 @@ class _GameHudOverlay extends StatelessWidget {
             ),
           ),
 
-          // Pause Menu Button
-          _ArcadeIconButton(
-            icon: Icons.pause_rounded,
-            tooltip: 'Pause Game',
-            onTap: onPausePressed,
+          // Right Actions: Sound Mute/Unmute & Pause Menu
+          Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              ValueListenableBuilder<bool>(
+                valueListenable: SoundManager.instance.isMutedNotifier,
+                builder: (context, isMuted, _) {
+                  return _ArcadeIconButton(
+                    icon: isMuted ? Icons.volume_off_rounded : Icons.volume_up_rounded,
+                    iconColor: isMuted ? const Color(0xFFFF5252) : const Color(0xFF00E5FF),
+                    tooltip: isMuted ? 'Unmute Sound' : 'Mute Sound',
+                    onTap: () => SoundManager.instance.toggleMute(),
+                  );
+                },
+              ),
+              const SizedBox(width: 8),
+              _ArcadeIconButton(
+                icon: Icons.pause_rounded,
+                tooltip: 'Pause Game',
+                onTap: onPausePressed,
+              ),
+            ],
           ),
         ],
       ),
@@ -229,11 +247,13 @@ class _ArcadeIconButton extends StatelessWidget {
     required this.icon,
     required this.tooltip,
     required this.onTap,
+    this.iconColor,
   });
 
   final IconData icon;
   final String tooltip;
   final VoidCallback onTap;
+  final Color? iconColor;
 
   @override
   Widget build(BuildContext context) {
@@ -261,7 +281,7 @@ class _ArcadeIconButton extends StatelessWidget {
                 ),
               ],
             ),
-            child: Icon(icon, color: Colors.white, size: 20),
+            child: Icon(icon, color: iconColor ?? Colors.white, size: 20),
           ),
         ),
       ),

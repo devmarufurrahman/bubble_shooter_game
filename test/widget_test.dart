@@ -48,5 +48,34 @@ void main() {
       expect(await levelManager.getUnlockedLevel(), equals(1));
       expect(await levelManager.getHighScore(1), equals(0));
     });
+
+    test('saveLevelProgress atomically persists score, stars, and unlocks next level', () async {
+      expect(await LevelManager.getStars(1), equals(0));
+      expect(await LevelManager.getHighScore(1), equals(0));
+      expect(await LevelManager.getUnlockedLevel(), equals(1));
+
+      // Save initial completion: 1500 points, 2 stars
+      await LevelManager.saveLevelProgress(1, 1500, 2);
+
+      expect(await LevelManager.getHighScore(1), equals(1500));
+      expect(await LevelManager.getStars(1), equals(2));
+      expect(await LevelManager.getUnlockedLevel(), equals(2));
+
+      // Lower score and lower stars should not overwrite
+      await LevelManager.saveLevelProgress(1, 1000, 1);
+      expect(await LevelManager.getHighScore(1), equals(1500));
+      expect(await LevelManager.getStars(1), equals(2));
+
+      // Higher score and higher stars should overwrite
+      await LevelManager.saveLevelProgress(1, 2500, 3);
+      expect(await LevelManager.getHighScore(1), equals(2500));
+      expect(await LevelManager.getStars(1), equals(3));
+
+      // Verify persistent keys directly
+      final prefs = await SharedPreferences.getInstance();
+      expect(prefs.getInt('level_1_score'), equals(2500));
+      expect(prefs.getInt('level_1_stars'), equals(3));
+      expect(prefs.getInt('unlocked_level'), equals(2));
+    });
   });
 }

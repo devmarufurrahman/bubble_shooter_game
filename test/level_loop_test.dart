@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:bubble_shooter_game/game/audio/sound_manager.dart';
 import 'package:bubble_shooter_game/game/bubble_shooter_game.dart';
 import 'package:bubble_shooter_game/game/components/bubble_color.dart';
 import 'package:bubble_shooter_game/game/components/grid_manager.dart';
@@ -12,6 +13,7 @@ void main() {
 
   setUp(() {
     SharedPreferences.setMockInitialValues({});
+    SoundManager.enableAudio = false;
   });
 
   BubbleShooterGame createGame([int level = 1]) {

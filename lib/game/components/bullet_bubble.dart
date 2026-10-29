@@ -18,6 +18,7 @@ class BulletBubble extends PositionComponent with CollisionCallbacks {
     this.speed = 750.0,
     this.onStopped,
     this.onImpact,
+    this.onBounce,
     super.position,
   })  : velocity = Vector2(math.sin(aimAngle) * speed, -math.cos(aimAngle) * speed),
         super(
@@ -48,6 +49,9 @@ class BulletBubble extends PositionComponent with CollisionCallbacks {
 
   /// Callback triggered upon impact with another bubble or the ceiling.
   final void Function(BubbleComponent? hitBubble)? onImpact;
+
+  /// Callback triggered whenever the bullet reflects off lateral walls.
+  final VoidCallback? onBounce;
 
   /// Whether the bullet is actively in flight.
   bool _isMoving = true;
@@ -102,12 +106,18 @@ class BulletBubble extends PositionComponent with CollisionCallbacks {
     // Left wall bounce (x - radius <= 0)
     if (position.x - radius <= 0) {
       position.x = radius;
-      velocity.x = velocity.x.abs(); // Reflect rightward
+      if (velocity.x < 0) {
+        velocity.x = velocity.x.abs(); // Reflect rightward
+        onBounce?.call();
+      }
     }
     // Right wall bounce (x + radius >= gameWidth)
     else if (position.x + radius >= gameWidth) {
       position.x = gameWidth - radius;
-      velocity.x = -velocity.x.abs(); // Reflect leftward
+      if (velocity.x > 0) {
+        velocity.x = -velocity.x.abs(); // Reflect leftward
+        onBounce?.call();
+      }
     }
 
     // Top ceiling boundary

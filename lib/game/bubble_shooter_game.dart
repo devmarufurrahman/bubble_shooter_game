@@ -3,10 +3,13 @@ import 'package:flame/components.dart';
 import 'package:flame/events.dart';
 import 'package:flame/game.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import '../levels/level_data.dart';
 import '../levels/level_manager.dart';
+import 'audio/sound_manager.dart';
 import 'components/arcade_game_backdrop.dart';
 import 'components/bubble_component.dart';
+import 'components/bubble_pop_particle.dart';
 import 'components/bullet_bubble.dart';
 import 'components/cannon_component.dart';
 import 'components/falling_bubble_component.dart';
@@ -84,6 +87,9 @@ class BubbleShooterGame extends FlameGame
   @override
   Future<void> onLoad() async {
     await super.onLoad();
+
+    // Initialize SoundManager
+    await SoundManager.instance.initialize();
 
     // Map world (0, 0) directly to the top-left of the 400x700 viewport
     camera.viewfinder.anchor = Anchor.topLeft;
@@ -203,6 +209,9 @@ class BubbleShooterGame extends FlameGame
     shotsRemaining--;
     shotsNotifier.value = shotsRemaining;
 
+    // Trigger firing audio effect
+    SoundManager.instance.playShoot();
+
     final Vector2 spawnPos = cannon.nozzleTipPosition.clone();
 
     late final BulletBubble bullet;
@@ -214,6 +223,7 @@ class BubbleShooterGame extends FlameGame
       ceilingY: gridManager.ceilingY,
       position: spawnPos,
       onImpact: (hitBubble) => _handleBulletImpact(bullet, hitBubble),
+      onBounce: () => SoundManager.instance.playBounce(),
     );
 
     activeBullet = bullet;
@@ -244,10 +254,22 @@ class BubbleShooterGame extends FlameGame
     );
 
     if (matches.length >= 3) {
-      // Pop all contiguous matching bubbles
+      // Trigger pop audio and subtle device haptic feedback
+      SoundManager.instance.playPop();
+      HapticFeedback.lightImpact();
+
+      // Pop all contiguous matching bubbles & spawn sparkling particle explosion
       for (final Point<int> pt in matches) {
         final BubbleComponent? bubble = gridManager.detachBubbleAt(pt.x, pt.y);
-        bubble?.pop();
+        if (bubble != null) {
+          world.add(
+            BubblePopParticle(
+              position: bubble.position.clone(),
+              bubbleType: bubble.bubbleType,
+            ),
+          );
+          bubble.pop();
+        }
       }
 
       // Award +100 points per popped bubble
@@ -263,6 +285,16 @@ class BubbleShooterGame extends FlameGame
       );
 
       if (dropped.isNotEmpty) {
+        // Also spawn particles at detachment point for dropped bubbles
+        for (final FallingBubbleComponent falling in dropped) {
+          world.add(
+            BubblePopParticle(
+              position: falling.position.clone(),
+              bubbleType: falling.bubbleType,
+              particleCount: 8,
+            ),
+          );
+        }
         // Award +200 bonus points per dropped orphan bubble
         _addScore(dropped.length * 200);
       }
@@ -295,24 +327,33 @@ class BubbleShooterGame extends FlameGame
     isProcessingMatch = false;
   }
 
+  /// Calculates earned stars (1 to 3) based on shots remaining for this level.
+  int calculateStars() {
+    if (shotsRemaining >= (levelConfig.maxShots * 0.5).round()) return 3;
+    if (shotsRemaining >= (levelConfig.maxShots * 0.25).round()) return 2;
+    return 1;
+  }
+
   void _addScore(int points) {
     currentScore += points;
     scoreNotifier.value = currentScore;
 
     if (currentScore > highScore) {
       highScore = currentScore;
-      LevelManager.instance.saveScore(levelNumber, currentScore);
+      LevelManager.saveScore(levelNumber, currentScore);
     }
   }
 
   Future<void> handleLevelVictory() async {
-    await LevelManager.instance.unlockNextLevel(levelNumber);
-    await LevelManager.instance.saveScore(levelNumber, currentScore);
+    SoundManager.instance.playWin();
+    final int stars = calculateStars();
+    await LevelManager.saveLevelProgress(levelNumber, currentScore, stars);
     pauseEngine();
     overlays.add('WinOverlay');
   }
 
   void handleGameOver(String reason) {
+    SoundManager.instance.playGameOver();
     gameOverReason = reason;
     pauseEngine();
     overlays.add('GameOverOverlay');
