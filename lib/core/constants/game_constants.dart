@@ -12,7 +12,8 @@ class GameConstants {
 
   // ── Grid Dimensions ──
   static const double defaultBubbleRadius = 25.0;
-  static const double defaultTopOffset = 60.0;
+  static const double topHudOffset = 110.0;
+  static const double defaultTopOffset = topHudOffset;
   static const int evenColumns = 8;
   static const int oddColumns = 7;
   static const int maxRows = 14;

@@ -136,8 +136,10 @@ class BulletBubble extends PositionComponent with CollisionCallbacks {
       }
     }
 
-    // Top ceiling boundary
-    if (position.y - radius <= ceilingY) {
+    // Top ceiling boundary: bullet hits ceiling when position.y - radius <= ceilingY
+    // (with ceilingY = kTopHudOffset - radius, this triggers when position.y <= kTopHudOffset).
+    // Zero bullets should ever fly above kTopHudOffset (ceilingY + radius).
+    if (position.y - radius <= ceilingY || position.y <= ceilingY + radius) {
       position.y = ceilingY + radius;
       stopMovement();
       onImpact?.call(null);

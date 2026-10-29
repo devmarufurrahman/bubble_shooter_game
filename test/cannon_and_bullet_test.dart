@@ -306,6 +306,29 @@ void main() {
       expect(bullet.hasStopped, isTrue);
       expect(stoppedCalled, isTrue);
     });
+
+    test('Bullet ceiling clamp with kTopHudOffset halts at y = kTopHudOffset', () {
+      const double hudCeilingY = kTopHudOffset - radius; // 110.0 - 25.0 = 85.0
+      bool impactCalled = false;
+
+      final bullet = BulletBubble(
+        bubbleType: BubbleType.red,
+        radius: radius,
+        aimAngle: 0.0,
+        gameWidth: gameWidth,
+        ceilingY: hudCeilingY,
+        position: Vector2(200, 150),
+        onImpact: (hit) => impactCalled = true,
+      );
+
+      // Advance physics towards ceiling
+      bullet.update(0.1); // moves up 75px: 150 - 75 = 75 <= 110.0 (ceilingY + radius)
+
+      expect(bullet.position.y, equals(kTopHudOffset));
+      expect(bullet.position.y, equals(hudCeilingY + radius));
+      expect(bullet.hasStopped, isTrue);
+      expect(impactCalled, isTrue);
+    });
   });
 }
 

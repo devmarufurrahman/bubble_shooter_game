@@ -10,17 +10,20 @@ import 'bullet_bubble.dart';
 
 export '../logic/hex_math.dart' show GridCoord;
 
+/// Global top spacing constant leaving safe vertical clearance for the Flutter HUD bar.
+const double kTopHudOffset = 110.0;
+
 /// Flame Component managing the Odd-r staggered hexagonal bubble grid.
 ///
 /// Grid specifications:
 /// - Virtual screen width budget: 400 logical pixels.
 /// - Even rows (0, 2, 4...): 8 columns. X = col * (2 * r) + r
 /// - Odd rows (1, 3, 5...): 7 columns. X = col * (2 * r) + (2 * r)
-/// - Y coordinate spacing = topOffset + row * (r * sqrt(3))
+/// - Y coordinate spacing = topOffset + row * (r * 1.7320508)
 class GridManager extends Component {
   GridManager({
     this.radius = 25.0,
-    this.topOffset = 60.0,
+    this.topOffset = kTopHudOffset,
     this.maxRows = 14,
     this.evenColumns = 8,
     this.oddColumns = 7,
@@ -34,7 +37,7 @@ class GridManager extends Component {
   /// Bubble radius (defaults to 25.0 for a 400-pixel width budget).
   final double radius;
 
-  /// Top canvas offset where row 0 bubble centers are positioned.
+  /// Top canvas offset where row 0 bubble centers are positioned (defaults to [kTopHudOffset]).
   final double topOffset;
 
   /// Maximum vertical capacity of the game board.
@@ -61,12 +64,19 @@ class GridManager extends Component {
 
   /// Calculates the absolute canvas (x, y) center position for cell [row], [col]
   /// following Odd-r staggered hexagonal mathematics.
-  Vector2 getCanvasPosition(int row, int col) => HexMath.getCanvasPosition(
-        row: row,
-        col: col,
-        radius: radius,
-        topOffset: topOffset,
-      );
+  /// Y coordinate calculation includes [topOffset] (defaults to [kTopHudOffset]):
+  ///   final y = topOffset + (row * (radius * 1.7320508));
+  /// X coordinate remains staggered Odd-r:
+  ///   Even row: col * (2 * radius) + radius
+  ///   Odd row:  col * (2 * radius) + (2 * radius)
+  Vector2 getCanvasPosition(int row, int col) {
+    final double diameter = 2 * radius;
+    final double x = (row % 2 == 0)
+        ? (col * diameter) + radius
+        : (col * diameter) + diameter;
+    final double y = topOffset + (row * (radius * 1.7320508));
+    return Vector2(x, y);
+  }
 
   /// Checks whether cell [row], [col] is currently occupied by a bubble.
   bool isCellOccupied(int row, int col) {

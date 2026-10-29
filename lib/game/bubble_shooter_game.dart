@@ -105,10 +105,10 @@ class BubbleShooterGame extends FlameGame
 
     // Initialize GridManager:
     // radius = 25.0 (fits 8 columns across 400px: 8 * 50 = 400)
-    // topOffset = 60.0 (leaves 35px clearance above row 0 for the ceiling line and HUD)
+    // topOffset = kTopHudOffset (110.0, leaves safe clearance below the Flutter HUD bar)
     gridManager = GridManager(
       radius: 25.0,
-      topOffset: 60.0,
+      topOffset: kTopHudOffset,
       maxRows: 14,
       evenColumns: 8,
       oddColumns: 7,

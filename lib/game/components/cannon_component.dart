@@ -345,6 +345,8 @@ class CannonComponent extends PositionComponent {
 
   /// Renders raycast wall-reflected dotted trajectory guideline starting precisely at the nozzle tip.
   void _renderTrajectoryGuide(Canvas canvas) {
+    // Trajectory raycast clamps at the bubble center collision line (ceilingY + bubbleRadius = kTopHudOffset)
+    final double targetCeilingY = (ceilingY + bubbleRadius) - position.y;
     final List<TrajectorySegment> segments = TrajectoryLine.calculateSegments(
       origin: Offset(
         math.sin(aimAngle) * barrelLength,
@@ -353,7 +355,7 @@ class CannonComponent extends PositionComponent {
       angle: aimAngle,
       minX: bubbleRadius - position.x,
       maxX: (gameWidth - bubbleRadius) - position.x,
-      ceilingY: ceilingY - position.y,
+      ceilingY: targetCeilingY,
     );
 
     // Draw glowing dotted points along each segment

@@ -51,6 +51,15 @@ void main() {
       expect(gridManager.ceilingY, equals(topOffset - radius));
     });
 
+    test('Default GridManager uses kTopHudOffset = 110.0 and ceilingY = 85.0', () {
+      final defaultGrid = GridManager();
+      expect(defaultGrid.topOffset, equals(kTopHudOffset));
+      expect(defaultGrid.ceilingY, equals(kTopHudOffset - 25.0));
+      expect(defaultGrid.getCanvasPosition(0, 0).y, equals(110.0));
+      // Row 1 calculation check: 110 + 25 * 1.7320508 ≈ 153.30
+      expect(defaultGrid.getCanvasPosition(1, 0).y, closeTo(110.0 + (25.0 * 1.7320508), 0.001));
+    });
+
     test('Set, query, and remove bubbles from grid', () {
       expect(gridManager.isCellOccupied(0, 0), isFalse);
       expect(gridManager.getBubbleAt(0, 0), isNull);
