@@ -2,10 +2,11 @@ import 'package:flame/components.dart';
 import 'package:flutter/material.dart';
 
 /// Procedural background component for the Flame game viewport.
-/// Renders a dark arcade gradient backdrop and a glowing top-ceiling boundary line.
+/// Renders a dark arcade gradient backdrop, glowing ceiling line, and danger threshold.
 class ArcadeGameBackdrop extends PositionComponent {
   ArcadeGameBackdrop({
     required this.ceilingY,
+    this.dangerLineY,
     Vector2? size,
   }) : super(
           position: Vector2.zero(),
@@ -15,6 +16,9 @@ class ArcadeGameBackdrop extends PositionComponent {
 
   /// Vertical Y position of the ceiling boundary line.
   final double ceilingY;
+
+  /// Optional Y position of the bottom danger line threshold.
+  final double? dangerLineY;
 
   @override
   void render(Canvas canvas) {
@@ -47,11 +51,10 @@ class ArcadeGameBackdrop extends PositionComponent {
       canvas.drawLine(Offset(x, 0), Offset(x, size.y), gridPaint);
     }
     for (double y = 0; y <= size.y; y += gridSpacing) {
-      canvas.drawLine(Offset(0, y), Offset(size.x, y), gridPaint);
+      canvas.drawLine(Offset(x, y), Offset(size.x, y), gridPaint);
     }
 
     // 3. Glowing ceiling boundary structure
-    // Ceiling fill area above boundary
     final Rect ceilingRect = Rect.fromLTWH(0, 0, size.x, ceilingY);
     final Paint ceilingAreaPaint = Paint()
       ..shader = LinearGradient(
@@ -91,6 +94,22 @@ class ArcadeGameBackdrop extends PositionComponent {
     for (double x = 10; x < size.x; x += 30) {
       canvas.drawLine(Offset(x, ceilingY - 6), Offset(x + 10, ceilingY), notchPaint);
     }
+
+    // 4. Subtle dashed Danger Line at floor threshold
+    if (dangerLineY != null) {
+      final double dy = dangerLineY!;
+      final Paint dangerGlow = Paint()
+        ..color = const Color(0xFFFF1744).withValues(alpha: 0.2)
+        ..maskFilter = const MaskFilter.blur(BlurStyle.normal, 4.0);
+      canvas.drawLine(Offset(0, dy), Offset(size.x, dy), dangerGlow);
+
+      final Paint dangerDashes = Paint()
+        ..color = const Color(0xFFFF1744).withValues(alpha: 0.5)
+        ..strokeWidth = 1.2;
+
+      for (double x = 0; x < size.x; x += 14) {
+        canvas.drawLine(Offset(x, dy), Offset(x + 7, dy), dangerDashes);
+      }
+    }
   }
 }
-

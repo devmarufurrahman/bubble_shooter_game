@@ -3,9 +3,11 @@ import 'package:flame/collisions.dart';
 import 'package:flame/components.dart';
 import 'package:flutter/material.dart';
 import 'bubble_color.dart';
+import 'bubble_component.dart';
 import 'procedural_bubble_renderer.dart';
 
-/// Dynamic projectile bubble fired from the cannon with wall-bouncing physics.
+/// Dynamic projectile bubble fired from the cannon with wall-bouncing physics,
+/// collision callbacks, and grid snapping triggers.
 class BulletBubble extends PositionComponent with CollisionCallbacks {
   BulletBubble({
     required this.bubbleType,
@@ -15,10 +17,11 @@ class BulletBubble extends PositionComponent with CollisionCallbacks {
     required this.ceilingY,
     this.speed = 750.0,
     this.onStopped,
+    this.onImpact,
     super.position,
   })  : velocity = Vector2(math.sin(aimAngle) * speed, -math.cos(aimAngle) * speed),
         super(
-          size: Vector2.all(radius * 2),
+          size: Vector2.zero(),
           anchor: Anchor.center,
         );
 
@@ -40,8 +43,11 @@ class BulletBubble extends PositionComponent with CollisionCallbacks {
   /// Top ceiling boundary coordinate.
   final double ceilingY;
 
-  /// Notification callback invoked when the bullet reaches the ceiling or grid.
+  /// Notification callback invoked when movement halts.
   final VoidCallback? onStopped;
+
+  /// Callback triggered upon impact with another bubble or the ceiling.
+  final void Function(BubbleComponent? hitBubble)? onImpact;
 
   /// Whether the bullet is actively in flight.
   bool _isMoving = true;
@@ -55,8 +61,12 @@ class BulletBubble extends PositionComponent with CollisionCallbacks {
   @override
   Future<void> onLoad() async {
     await super.onLoad();
-    // Add collision boundary for grid bubble interactions
-    add(CircleHitbox());
+    // Add collision boundary centered at Vector2.zero
+    add(CircleHitbox(
+      radius: radius,
+      anchor: Anchor.center,
+      position: Vector2.zero(),
+    ));
   }
 
   /// Halts the projectile physics and locks its current position.
@@ -66,6 +76,18 @@ class BulletBubble extends PositionComponent with CollisionCallbacks {
     _hasStopped = true;
     velocity = Vector2.zero();
     onStopped?.call();
+  }
+
+  @override
+  void onCollisionStart(Set<Vector2> intersectionPoints, PositionComponent other) {
+    super.onCollisionStart(intersectionPoints, other);
+
+    if (!_isMoving || _hasStopped) return;
+
+    if (other is BubbleComponent) {
+      stopMovement();
+      onImpact?.call(other);
+    }
   }
 
   @override
@@ -92,6 +114,7 @@ class BulletBubble extends PositionComponent with CollisionCallbacks {
     if (position.y - radius <= ceilingY) {
       position.y = ceilingY + radius;
       stopMovement();
+      onImpact?.call(null);
     }
   }
 
@@ -99,13 +122,12 @@ class BulletBubble extends PositionComponent with CollisionCallbacks {
   void render(Canvas canvas) {
     super.render(canvas);
 
-    // Procedural 3D bubble render matching the grid bubbles
+    // Procedural 3D bubble render centered directly at Offset.zero
     ProceduralBubbleRenderer.renderSphere(
       canvas,
-      center: Offset(radius, radius),
+      center: Offset.zero,
       radius: radius,
       bubbleType: bubbleType,
     );
   }
 }
-

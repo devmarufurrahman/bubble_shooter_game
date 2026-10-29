@@ -2,6 +2,7 @@ import 'dart:math' as math;
 import 'package:flame/components.dart';
 import 'bubble_color.dart';
 import 'bubble_component.dart';
+import 'bullet_bubble.dart';
 
 /// Point representation for integer grid coordinates.
 class GridCoord {
@@ -111,17 +112,22 @@ class GridManager extends Component {
     _grid[row][col] = bubble;
   }
 
-  /// Removes and detaches the bubble at [row], [col] if present.
-  void removeBubbleAt(int row, int col) {
-    if (row < 0 || row >= maxRows) return;
+  /// Clears the grid cell reference without immediately removing the component
+  /// from the Flame tree, allowing custom animations (such as popping) to complete.
+  BubbleComponent? detachBubbleAt(int row, int col) {
+    if (row < 0 || row >= maxRows) return null;
     final int cols = getColumnsForRow(row);
-    if (col < 0 || col >= cols) return;
+    if (col < 0 || col >= cols) return null;
 
     final BubbleComponent? bubble = _grid[row][col];
-    if (bubble != null) {
-      bubble.removeFromParent();
-      _grid[row][col] = null;
-    }
+    _grid[row][col] = null;
+    return bubble;
+  }
+
+  /// Removes and detaches the bubble at [row], [col] if present.
+  void removeBubbleAt(int row, int col) {
+    final BubbleComponent? bubble = detachBubbleAt(row, col);
+    bubble?.removeFromParent();
   }
 
   /// Retrieves the bubble at [row], [col] or null if cell is empty or out of bounds.
@@ -132,23 +138,120 @@ class GridManager extends Component {
     return _grid[row][col];
   }
 
-  /// Populates the grid using raw level matrix data.
-  /// [levelGridData] contains rows of integers representing [BubbleType] indices.
-  /// Values outside [0, 4] represent empty cells.
-  void populateInitialGrid(List<List<int>> levelGridData) {
+  /// Evaluates Euclidean distance to identify the optimal empty hexagonal grid
+  /// cell to anchor an incoming projectile at [impactPosition].
+  GridCoord findBestSnapCell(Vector2 impactPosition, BubbleComponent? hitBubble) {
+    if (hitBubble == null) {
+      // Ceiling impact with no bubble: search empty slots in Row 0
+      final int row0Cols = getColumnsForRow(0);
+      int bestCol = 0;
+      double minDistance = double.infinity;
+
+      for (int c = 0; c < row0Cols; c++) {
+        if (!isCellOccupied(0, c)) {
+          final Vector2 cellPos = getCanvasPosition(0, c);
+          final double dist = (cellPos - impactPosition).length;
+          if (dist < minDistance) {
+            minDistance = dist;
+            bestCol = c;
+          }
+        }
+      }
+      return GridCoord(0, bestCol);
+    }
+
+    // Bubble collision: check all empty neighbors around hitBubble
+    final List<GridCoord> neighbors = getNeighbors(hitBubble.row, hitBubble.col);
+    final List<GridCoord> emptyNeighbors =
+        neighbors.where((n) => !isCellOccupied(n.row, n.col)).toList();
+
+    if (emptyNeighbors.isNotEmpty) {
+      GridCoord best = emptyNeighbors.first;
+      double minDistance = double.infinity;
+
+      for (final GridCoord n in emptyNeighbors) {
+        final Vector2 cellPos = getCanvasPosition(n.row, n.col);
+        final double dist = (cellPos - impactPosition).length;
+        if (dist < minDistance) {
+          minDistance = dist;
+          best = n;
+        }
+      }
+      return best;
+    }
+
+    // Fallback: search all available empty cells in the grid closest to impact
+    GridCoord fallback = const GridCoord(0, 0);
+    double minDistance = double.infinity;
+
+    for (int r = 0; r < maxRows; r++) {
+      final int cols = getColumnsForRow(r);
+      for (int c = 0; c < cols; c++) {
+        if (!isCellOccupied(r, c)) {
+          final Vector2 cellPos = getCanvasPosition(r, c);
+          final double dist = (cellPos - impactPosition).length;
+          if (dist < minDistance) {
+            minDistance = dist;
+            fallback = GridCoord(r, c);
+          }
+        }
+      }
+    }
+
+    return fallback;
+  }
+
+  /// Snaps [bullet] into the optimal empty grid cell, creates a static [BubbleComponent],
+  /// attaches it to the board, and removes the dynamic projectile.
+  BubbleComponent snapBulletToGrid({
+    required BulletBubble bullet,
+    BubbleComponent? hitBubble,
+  }) {
+    final GridCoord snapCoord = findBestSnapCell(bullet.position, hitBubble);
+    final BubbleComponent newBubble = BubbleComponent(
+      row: snapCoord.row,
+      col: snapCoord.col,
+      bubbleType: bullet.bubbleType,
+      radius: radius,
+    );
+
+    setBubbleAt(snapCoord.row, snapCoord.col, newBubble);
+    bullet.removeFromParent();
+    return newBubble;
+  }
+
+  /// Populates the grid using level matrix data.
+  /// If [oneBased] is true (or matrix contains 5), format is 0: empty, 1..5: BubbleType.
+  /// Otherwise, format is 0-based index (0..4).
+  void populateInitialGrid(List<List<int>> levelGridData, {bool? oneBased}) {
     clear();
+
+    final bool isOneBased =
+        oneBased ?? levelGridData.any((row) => row.any((v) => v >= 5));
 
     for (int r = 0; r < levelGridData.length && r < maxRows; r++) {
       final List<int> rowData = levelGridData[r];
       final int maxCols = getColumnsForRow(r);
 
       for (int c = 0; c < rowData.length && c < maxCols; c++) {
-        final int typeIndex = rowData[c];
-        if (typeIndex >= 0 && typeIndex < BubbleType.values.length) {
+        final int rawVal = rowData[c];
+        BubbleType? type;
+
+        if (isOneBased) {
+          if (rawVal >= 1 && rawVal <= BubbleType.values.length) {
+            type = BubbleType.values[rawVal - 1];
+          }
+        } else {
+          if (rawVal >= 0 && rawVal < BubbleType.values.length) {
+            type = BubbleType.values[rawVal];
+          }
+        }
+
+        if (type != null) {
           final BubbleComponent bubble = BubbleComponent(
             row: r,
             col: c,
-            bubbleType: BubbleType.values[typeIndex],
+            bubbleType: type,
             radius: radius,
           );
           setBubbleAt(r, c, bubble);
@@ -156,6 +259,9 @@ class GridManager extends Component {
       }
     }
   }
+
+  /// Whether all bubbles on the board have been cleared (Win condition).
+  bool get allBubblesCleared => totalActiveBubbles == 0;
 
   /// Clears all bubbles from the board and removes them from the component tree.
   void clear() {
@@ -219,4 +325,3 @@ class GridManager extends Component {
   /// Returns total count of occupied bubbles on the board.
   int get totalActiveBubbles => activeBubbles.length;
 }
-

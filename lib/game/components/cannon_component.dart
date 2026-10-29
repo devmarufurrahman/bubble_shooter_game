@@ -9,21 +9,28 @@ import 'procedural_bubble_renderer.dart';
 /// Handles touch aim calculations, 70-degree rotation clamping,
 /// raycast reflective dotted trajectory lines, and bubble queue previews.
 class CannonComponent extends PositionComponent {
+  /// Default distance from the bottom of the virtual screen.
+  static const double defaultBottomOffset = 48.0;
+
   CannonComponent({
     required this.gameWidth,
     required this.gameHeight,
     required this.ceilingY,
     required this.bubbleRadius,
+    this.bottomOffset = defaultBottomOffset,
     Vector2? position,
   }) : super(
-          position: position ?? Vector2(gameWidth / 2, gameHeight - 70),
-          size: Vector2.all(90),
+          position: position ?? Vector2(gameWidth / 2, gameHeight - bottomOffset),
+          size: Vector2.zero(),
           anchor: Anchor.center,
         );
 
   /// Game canvas dimensions.
   final double gameWidth;
   final double gameHeight;
+
+  /// Distance from the bottom of the viewport to the cannon pivot.
+  final double bottomOffset;
 
   /// Top boundary limit for trajectory guides.
   final double ceilingY;
@@ -40,8 +47,17 @@ class CannonComponent extends PositionComponent {
   /// Current aiming angle in radians (0 = straight up, > 0 = right, < 0 = left).
   double aimAngle = 0.0;
 
+  /// Angle alias for [aimAngle].
+  @override
+  double get angle => aimAngle;
+  @override
+  set angle(double val) => aimAngle = val;
+
   /// Whether the user is actively dragging/aiming.
   bool isAiming = false;
+
+  /// List of available bubble colors for the active level.
+  List<BubbleType> availableColors = BubbleType.values;
 
   /// Active bubble queued to fire.
   late BubbleType currentBubbleType;
@@ -52,19 +68,43 @@ class CannonComponent extends PositionComponent {
   @override
   Future<void> onLoad() async {
     await super.onLoad();
-    // Default initial queue
-    currentBubbleType = BubbleType.random();
-    nextBubbleType = BubbleType.random();
+    // Anchor at exact horizontal center and bottomOffset above bottom
+    if (position == Vector2.zero()) {
+      position = Vector2(gameWidth / 2, gameHeight - bottomOffset);
+    }
+    initializeQueue();
   }
 
-  /// Calculates world position of the cannon nozzle tip.
-  Vector2 get nozzlePosition {
-    return position +
-        Vector2(
-          math.sin(aimAngle) * barrelLength,
-          -math.cos(aimAngle) * barrelLength,
-        );
+  /// Picks a random color from the level's available colors.
+  BubbleType _pickAvailableColor() {
+    if (availableColors.isNotEmpty) {
+      final math.Random rng = math.Random();
+      return availableColors[rng.nextInt(availableColors.length)];
+    }
+    return BubbleType.random();
   }
+
+  /// Initializes or resets the current and next bubbles in the cannon queue.
+  void initializeQueue([GridManager? gridManager]) {
+    if (gridManager != null && gridManager.activeBubbles.isNotEmpty) {
+      currentBubbleType = pickRandomGridColor(gridManager);
+      nextBubbleType = pickRandomGridColor(gridManager);
+    } else {
+      currentBubbleType = _pickAvailableColor();
+      nextBubbleType = _pickAvailableColor();
+    }
+  }
+
+  /// Calculates the exact world position of the cannon nozzle tip.
+  Vector2 get nozzleTipPosition =>
+      position +
+      Vector2(
+        math.sin(aimAngle) * barrelLength,
+        -math.cos(aimAngle) * barrelLength,
+      );
+
+  /// Backwards-compatible alias for [nozzleTipPosition].
+  Vector2 get nozzlePosition => nozzleTipPosition;
 
   /// Updates the aim rotation based on an input target point in world coordinates.
   void aimAt(Vector2 targetPoint) {
@@ -88,14 +128,13 @@ class CannonComponent extends PositionComponent {
   }
 
   /// Selects a random [BubbleType] currently existing on the active grid.
-  /// Falls back to complete random if the grid has no remaining bubbles.
+  /// Falls back to [availableColors] if the grid has no remaining bubbles.
   BubbleType pickRandomGridColor(GridManager gridManager) {
     final activeBubbles = gridManager.activeBubbles;
     if (activeBubbles.isEmpty) {
-      return BubbleType.random();
+      return _pickAvailableColor();
     }
 
-    // Collect unique colors currently on board
     final Set<BubbleType> availableTypes = activeBubbles.map((b) => b.bubbleType).toSet();
     final List<BubbleType> typeList = availableTypes.toList();
     final math.Random rng = math.Random();
@@ -114,16 +153,16 @@ class CannonComponent extends PositionComponent {
     // 2. Next bubble preview queue (drawn to the left of the cannon)
     _renderNextPreviewPod(canvas);
 
-    // 3. Metallic base pedestal
+    // 3. Metallic base pedestal centered at Offset.zero
     _renderBasePedestal(canvas);
 
-    // 4. Rotating barrel turret & loaded bubble
+    // 4. Rotating barrel turret & loaded bubble centered at Offset.zero
     _renderRotatingTurret(canvas);
   }
 
-  /// Renders raycast wall-reflected dotted trajectory guideline.
+  /// Renders raycast wall-reflected dotted trajectory guideline starting precisely at the nozzle tip.
   void _renderTrajectoryGuide(Canvas canvas) {
-    // Nozzle tip in local canvas coordinates
+    // Nozzle tip in local canvas coordinates (Offset.zero is the cannon center)
     Offset current = Offset(
       math.sin(aimAngle) * barrelLength,
       -math.cos(aimAngle) * barrelLength,
@@ -216,7 +255,7 @@ class CannonComponent extends PositionComponent {
     }
   }
 
-  /// Renders the "NEXT" queue preview bubble pod slightly to the left.
+  /// Renders the "NEXT" queue preview bubble pod slightly to the left of the cannon.
   void _renderNextPreviewPod(Canvas canvas) {
     const Offset podCenter = Offset(-72, 8);
     const double podRadius = 24.0;
@@ -264,7 +303,7 @@ class CannonComponent extends PositionComponent {
     );
   }
 
-  /// Renders the metallic pedestal base with arcade angle graduations.
+  /// Renders the metallic pedestal base centered at local [Offset.zero].
   void _renderBasePedestal(Canvas canvas) {
     const double baseRadius = 38.0;
 
@@ -306,12 +345,12 @@ class CannonComponent extends PositionComponent {
     }
   }
 
-  /// Renders rotating barrel turret and the active bubble loaded ready to fire.
+  /// Renders rotating barrel turret and active bubble pointing upward along the negative Y-axis.
   void _renderRotatingTurret(Canvas canvas) {
     canvas.save();
     canvas.rotate(aimAngle);
 
-    // 1. Barrel nozzle cylinder
+    // 1. Barrel nozzle cylinder pointing upward along negative Y-axis
     const double barrelWidth = 30.0;
     const double halfW = barrelWidth / 2;
     final Rect barrelRect = Rect.fromLTWH(-halfW, -barrelLength, barrelWidth, barrelLength);
@@ -346,7 +385,7 @@ class CannonComponent extends PositionComponent {
       ..style = PaintingStyle.fill;
     canvas.drawRect(Rect.fromLTWH(-halfW, -barrelLength, barrelWidth, 5), muzzleBand);
 
-    // 2. Active ready-to-shoot bubble nestled at the barrel base
+    // 2. Active ready-to-shoot bubble nestled at the barrel base (y = -6)
     ProceduralBubbleRenderer.renderSphere(
       canvas,
       center: const Offset(0, -6),
@@ -355,7 +394,7 @@ class CannonComponent extends PositionComponent {
       drawShadow: false,
     );
 
-    // 3. Central pivot cap
+    // 3. Central pivot cap centered at Offset.zero
     final Paint pivotPaint = Paint()
       ..shader = const RadialGradient(
         colors: [Color(0xFF536894), Color(0xFF161F36)],
@@ -377,4 +416,3 @@ class _GuideSegment {
   final Offset end;
   const _GuideSegment(this.start, this.end);
 }
-
