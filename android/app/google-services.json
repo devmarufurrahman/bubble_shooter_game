@@ -12,7 +12,20 @@
           "package_name": "com.adaptix.bubble_shooter_game"
         }
       },
-      "oauth_client": [],
+      "oauth_client": [
+        {
+          "client_id": "558359392948-m1gatpusfdjjmujiqf10sbn3189j3fq4.apps.googleusercontent.com",
+          "client_type": 1,
+          "android_info": {
+            "package_name": "com.adaptix.bubble_shooter_game",
+            "certificate_hash": "251ac82b453db680c082d3d15742d4979e66a65a"
+          }
+        },
+        {
+          "client_id": "558359392948-sgj7j7vb581ho5lu1e98puva4gbg4aim.apps.googleusercontent.com",
+          "client_type": 3
+        }
+      ],
       "api_key": [
         {
           "current_key": "AIzaSyCbjoYPcZ4ruY_Cz-x_rw_0GZmB19K4UoE"
@@ -20,7 +33,19 @@
       ],
       "services": {
         "appinvite_service": {
-          "other_platform_oauth_client": []
+          "other_platform_oauth_client": [
+            {
+              "client_id": "558359392948-sgj7j7vb581ho5lu1e98puva4gbg4aim.apps.googleusercontent.com",
+              "client_type": 3
+            },
+            {
+              "client_id": "558359392948-376e0pu7i1dcvpfrd891l87f6c57or53.apps.googleusercontent.com",
+              "client_type": 2,
+              "ios_info": {
+                "bundle_id": "com.adaptix.bubbleShooterGame"
+              }
+            }
+          ]
         }
       }
     }

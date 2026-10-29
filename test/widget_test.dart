@@ -1,30 +1,52 @@
-// This is a basic Flutter widget test.
-//
-// To perform an interaction with a widget in your test, use the WidgetTester
-// utility in the flutter_test package. For example, you can send tap and scroll
-// gestures. You can also use WidgetTester to find child widgets in the widget
-// tree, read text, and verify that the values of widget properties are correct.
-
-import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
-
-import 'package:bubble_shooter_game/main.dart';
+import 'package:shared_preferences/shared_preferences.dart';
+import 'package:bubble_shooter_game/levels/level_manager.dart';
 
 void main() {
-  testWidgets('Counter increments smoke test', (WidgetTester tester) async {
-    // Build our app and trigger a frame.
-    await tester.pumpWidget(const MyApp());
+  TestWidgetsFlutterBinding.ensureInitialized();
 
-    // Verify that our counter starts at 0.
-    expect(find.text('0'), findsOneWidget);
-    expect(find.text('1'), findsNothing);
+  setUp(() {
+    SharedPreferences.setMockInitialValues({});
+  });
 
-    // Tap the '+' icon and trigger a frame.
-    await tester.tap(find.byIcon(Icons.add));
-    await tester.pump();
+  group('LevelManager Tests', () {
+    test('Default unlocked level should be 1', () async {
+      final levelManager = LevelManager.instance;
+      final int unlocked = await levelManager.getUnlockedLevel();
+      expect(unlocked, equals(1));
+    });
 
-    // Verify that our counter has incremented.
-    expect(find.text('0'), findsNothing);
-    expect(find.text('1'), findsOneWidget);
+    test('Unlocking next level increases level correctly', () async {
+      final levelManager = LevelManager.instance;
+      await levelManager.unlockNextLevel(1);
+      final int unlocked = await levelManager.getUnlockedLevel();
+      expect(unlocked, equals(2));
+    });
+
+    test('Saving high score persists and updates correctly', () async {
+      final levelManager = LevelManager.instance;
+      expect(await levelManager.getHighScore(1), equals(0));
+
+      await levelManager.saveScore(1, 1500);
+      expect(await levelManager.getHighScore(1), equals(1500));
+
+      // Lower score should not overwrite
+      await levelManager.saveScore(1, 1200);
+      expect(await levelManager.getHighScore(1), equals(1500));
+
+      // Higher score should overwrite
+      await levelManager.saveScore(1, 3000);
+      expect(await levelManager.getHighScore(1), equals(3000));
+    });
+
+    test('Resetting progress clears unlocks and high scores', () async {
+      final levelManager = LevelManager.instance;
+      await levelManager.unlockNextLevel(1);
+      await levelManager.saveScore(1, 2000);
+
+      await levelManager.resetProgress();
+      expect(await levelManager.getUnlockedLevel(), equals(1));
+      expect(await levelManager.getHighScore(1), equals(0));
+    });
   });
 }
